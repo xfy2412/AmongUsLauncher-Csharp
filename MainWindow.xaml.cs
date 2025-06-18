@@ -59,7 +59,7 @@ namespace AULGK
         private readonly ObservableCollection<PresetServerDisplayItem> _presetServerDisplayItems = new();
         private List<RegionInfo> _regions = new();
         private List<PresetServer> _presetServers = new();
-        private int _currentRegionIdx = 3;
+        private int _currentRegionIdx = 0;
         private RegionInfo? _currentRegion;
         private TextBox? _nameEntry, _pingEntry, _portEntry, _translateEntry;
         private TextBlock? _nameStatus, _pingStatus, _portStatus, _translateStatus;
