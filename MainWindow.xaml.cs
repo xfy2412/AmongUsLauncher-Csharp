@@ -2,10 +2,12 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Runtime.CompilerServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
@@ -15,8 +17,6 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
-using System.Net.Http;
-using System.Text.Json.Serialization;
 
 namespace AULGK
 {
@@ -50,88 +50,89 @@ namespace AULGK
 
     public partial class MainWindow : Window
     {
-        private readonly HttpClient httpClient = new HttpClient();
-        private readonly string presetServersUrl = "https://mxzc.cloud:35249/preset_servers.json"; // 替换为你的 HTTPS 地址
-        private readonly string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        private readonly string filePath;
-        private readonly string logPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"..\LocalLow\Innersloth\Among Us\AULGK.log");
-        private List<RegionInfo> regions;
-        private int currentRegionIdx = 3;
-        private RegionInfo? currentRegion;
-        private TextBox? nameEntry, pingEntry, portEntry, translateEntry;
-        private TextBlock? nameStatus, pingStatus, portStatus, translateStatus;
-        private StackPanel? advancedPanel;
-        private bool advancedVisible;
-        private List<PresetServer> presetServers;
-        private bool isUpdatingSelection = false;
-        private Point? dragStartPoint;
-        private int lastInsertIndex = -1;
-        private bool isDragging = false;
-        private bool isUpdatingPingDelays = false;
-
-        private void WriteLog(string message)
-        {
-            try
-            {
-                string logEntry = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}\n";
-                File.AppendAllText(logPath, logEntry);
-            }
-            catch
-            {
-                // 忽略日志写入错误
-            }
-        }
+        // 私有字段
+        private readonly HttpClient _httpClient = new();
+        private readonly string _presetServersUrl = "https://mxzc.cloud:35249/preset_servers.json";
+        private readonly string _appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        private readonly string _filePath;
+        private readonly string _logPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"..\LocalLow\Innersloth\Among Us\AULGK.log");
+        private readonly ObservableCollection<ServerDisplayItem> _serverDisplayItems = new();
+        private readonly ObservableCollection<PresetServerDisplayItem> _presetServerDisplayItems = new();
+        private List<RegionInfo> _regions = new();
+        private List<PresetServer> _presetServers = new();
+        private int _currentRegionIdx = 3;
+        private RegionInfo? _currentRegion;
+        private TextBox? _nameEntry, _pingEntry, _portEntry, _translateEntry;
+        private TextBlock? _nameStatus, _pingStatus, _portStatus, _translateStatus;
+        private StackPanel? _advancedPanel;
+        private bool _advancedVisible;
+        private bool _isUpdatingSelection;
+        private bool _isDragging;
+        private bool _isUpdatingPingDelays;
+        private Point? _dragStartPoint;
+        private int _lastInsertIndex = -1;
 
         public MainWindow()
         {
             InitializeComponent();
-            filePath = System.IO.Path.Combine(appDataPath, @"..\LocalLow\Innersloth\Among Us\regionInfo.json");
-            regions = new List<RegionInfo>();
-            presetServers = new List<PresetServer>(); LoadData();
+            _filePath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\regionInfo.json");
+            InitializeApplication();
+        }
+
+        // 初始化应用程序
+        private void InitializeApplication()
+        {
+            LoadData();
             InitializePresetServers();
             Dispatcher.InvokeAsync(async () =>
             {
                 await LoadPresetServersAsync();
                 ShowMainPage();
             }, DispatcherPriority.Background);
+            WriteLog("应用程序初始化完成");
         }
 
+        // 加载本地服务器数据
         private void LoadData()
         {
             try
             {
-                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(filePath)!);
-                if (File.Exists(filePath))
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_filePath)!);
+                if (File.Exists(_filePath))
                 {
-                    string json = File.ReadAllText(filePath);
+                    string json = File.ReadAllText(_filePath);
                     var data = JsonSerializer.Deserialize<RegionData>(json);
                     if (data != null)
                     {
-                        regions = data.Regions ?? new List<RegionInfo>();
-                        currentRegionIdx = data.CurrentRegionIdx;
+                        _regions = data.Regions ?? new();
+                        _currentRegionIdx = data.CurrentRegionIdx;
+                        WriteLog($"加载 {_regions.Count} 个服务器，当前索引：{_currentRegionIdx}");
                     }
                 }
                 else
                 {
                     SaveData();
+                    WriteLog("未找到 regionInfo.json，创建默认文件");
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"加载文件时出错: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-                regions = new List<RegionInfo>();
+                MessageBox.Show($"加载文件失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                _regions = new();
                 SaveData();
+                WriteLog($"加载数据失败：{ex.Message}");
             }
         }
 
+        // 保存服务器数据到文件
         private void SaveData()
         {
             try
             {
                 var data = new RegionData
                 {
-                    CurrentRegionIdx = currentRegionIdx,
-                    Regions = regions
+                    CurrentRegionIdx = _currentRegionIdx,
+                    Regions = _regions
                 };
                 var options = new JsonSerializerOptions
                 {
@@ -139,174 +140,121 @@ namespace AULGK
                     Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                 };
                 string json = JsonSerializer.Serialize(data, options);
-                File.WriteAllText(filePath, json);
+                File.WriteAllText(_filePath, json);
+                WriteLog("服务器数据已保存");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"保存文件时出错: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"保存文件失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                WriteLog($"保存数据失败：{ex.Message}");
             }
         }
 
-        private readonly ObservableCollection<PresetServerDisplayItem> presetServerDisplayItems = new ObservableCollection<PresetServerDisplayItem>();
-
+        // 初始化预设服务器列表
         private void InitializePresetServers()
         {
-            presetServerDisplayItems.Clear();
-            for (int i = 0; i < presetServers.Count; i++)
+            _presetServerDisplayItems.Clear();
+            foreach (var (server, index) in _presetServers.Select((s, i) => (s, i)))
             {
-                var displayItem = new PresetServerDisplayItem
+                _presetServerDisplayItems.Add(new PresetServerDisplayItem
                 {
-                    DisplayText = StripColorTags(presetServers[i].Name ?? ""),
-                    PresetIndex = i,
+                    DisplayText = StripColorTags(server.Name ?? ""),
+                    PresetIndex = index,
                     IsSelected = false
-                };
-                presetServerDisplayItems.Add(displayItem);
-                WriteLog($"InitializePresetServers: Added item {i}, DisplayText={displayItem.DisplayText}");
+                });
             }
-            if (PresetServerListBox.ItemsSource == null)
-            {
-                PresetServerListBox.ItemsSource = presetServerDisplayItems;
-            }
+            PresetServerListBox.ItemsSource ??= _presetServerDisplayItems;
             PresetServerListBox.Items.Refresh();
-            WriteLog($"InitializePresetServers: Loaded {presetServers.Count} preset servers");
+            WriteLog($"初始化 {_presetServers.Count} 个预设服务器");
         }
 
+        // 异步加载预设服务器
         private async Task LoadPresetServersAsync()
         {
-            WriteLog($"LoadPresetServersAsync: Fetching preset servers from {presetServersUrl}");
             try
             {
-                var response = await httpClient.GetAsync(presetServersUrl);
+                var response = await _httpClient.GetAsync(_presetServersUrl);
                 response.EnsureSuccessStatusCode();
                 string json = await response.Content.ReadAsStringAsync();
                 var servers = JsonSerializer.Deserialize<List<PresetServer>>(json);
-                if (servers != null && servers.Any())
+                if (servers?.Any() == true)
                 {
-                    presetServers.Clear();
-                    presetServers.AddRange(servers);
-                    WriteLog($"LoadPresetServersAsync: Loaded {servers.Count} preset servers");
+                    _presetServers = servers;
+                    WriteLog($"从 {_presetServersUrl} 加载 {servers.Count} 个预设服务器");
                 }
                 else
                 {
-                    WriteLog("LoadPresetServersAsync: No preset servers found in response");
                     InitializeDefaultPresetServers();
+                    WriteLog("预设服务器响应为空，使用默认服务器");
                 }
             }
             catch (Exception ex)
             {
-                WriteLog($"LoadPresetServersAsync: Error fetching preset servers: {ex.Message}");
                 InitializeDefaultPresetServers();
+                WriteLog($"加载预设服务器失败：{ex.Message}");
             }
             InitializePresetServers();
         }
 
+        // 初始化默认预设服务器
         private void InitializeDefaultPresetServers()
         {
-            WriteLog("InitializeDefaultPresetServers: Loading fallback preset servers");
-            presetServers.Clear();
-            presetServers.AddRange(new List<PresetServer>
-        {
-            new PresetServer { Name = "Niko233(CN)", PingServer = "au-cn.niko233.me", Port = "443" }
-        });
-            InitializePresetServers();
+            _presetServers = new List<PresetServer>
+            {
+                new() { Name = "Niko233(CN)", PingServer = "au-cn.niko233.me", Port = "443" }
+            };
+            WriteLog("加载默认预设服务器");
         }
 
-        private void LaunchGame_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                Process.Start(new ProcessStartInfo("steam://rungameid/945360") { UseShellExecute = true });
-                MessageBox.Show("正在启动 Among Us...", "启动游戏", MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"启动游戏失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-
+        // 显示主页面
         private void ShowMainPage()
         {
             var slideOutAnimation = (Storyboard)FindResource("SlideOutServerPanel");
-            slideOutAnimation.Completed += (s, e) =>
+            slideOutAnimation.Completed += (_, _) =>
             {
                 ServerPanel.Visibility = Visibility.Collapsed;
                 MainPanel.Visibility = Visibility.Visible;
             };
             slideOutAnimation.Begin();
             UpdateServerList();
+            WriteLog("显示主页面");
         }
 
-        private void OpenServerEditor_Click(object sender, RoutedEventArgs e)
-        {
-            MainPanel.Visibility = Visibility.Collapsed;
-            ServerPanel.Visibility = Visibility.Visible;
-            var slideInAnimation = (Storyboard)FindResource("SlideInServerPanel");
-            slideInAnimation.Completed += async (s, e) =>
-            {
-                await Dispatcher.InvokeAsync(async () =>
-                {
-                    await LoadPresetServersAsync();
-                    UpdateServerList();
-                    ServerListBox.SelectedIndex = -1;
-                    foreach (ServerDisplayItem item in ServerListBox.Items)
-                    {
-                        item.IsSelected = false;
-                    }
-                    currentRegion = null;
-                    DeleteButton.Visibility = Visibility.Hidden;
-                    DetailPanel.Children.Clear();
-                    var emptyLabel = new TextBlock
-                    {
-                        Text = "请从左侧列表中选择一个服务器进行配置",
-                        Foreground = new SolidColorBrush(Colors.Gray),
-                        FontSize = 14,
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center
-                    };
-                    DetailPanel.Children.Add(emptyLabel);
-                });
-            };
-            slideInAnimation.Begin();
-        }
-
-        private readonly ObservableCollection<ServerDisplayItem> serverDisplayItems = new ObservableCollection<ServerDisplayItem>();
-
+        // 更新服务器列表
         private void UpdateServerList()
         {
-            WriteLog($"UpdateServerList: Starting with {regions.Count} regions");
-            var selectedIndices = serverDisplayItems
+            var selectedIndices = _serverDisplayItems
                 .Where(item => item.IsSelected && !string.IsNullOrEmpty(item.DisplayText))
                 .Select(item => item.RegionIndex)
                 .ToList();
             var oldSelectedIndex = ServerListBox.SelectedIndex;
             var newSelectedIndex = -1;
-
-            List<RegionInfo> oldSelectedRegions = selectedIndices
-                .Where(i => i >= 0 && i < regions.Count)
-                .Select(i => regions[i])
+            var oldSelectedRegions = selectedIndices
+                .Where(i => i >= 0 && i < _regions.Count)
+                .Select(i => _regions[i])
                 .ToList();
-            if (oldSelectedIndex >= 0 && oldSelectedIndex < regions.Count)
+
+            if (oldSelectedIndex >= 0 && oldSelectedIndex < _regions.Count)
             {
-                oldSelectedRegions.Add(regions[oldSelectedIndex]);
+                oldSelectedRegions.Add(_regions[oldSelectedIndex]);
             }
 
-            serverDisplayItems.Clear();
-            for (int i = 0; i < regions.Count; i++)
+            _serverDisplayItems.Clear();
+            for (int i = 0; i < _regions.Count; i++)
             {
-                var displayItem = new ServerDisplayItem
+                _serverDisplayItems.Add(new ServerDisplayItem
                 {
-                    DisplayText = StripColorTags(regions[i].Name ?? ""),
+                    DisplayText = StripColorTags(_regions[i].Name ?? ""),
                     RegionIndex = i,
                     IsSelected = selectedIndices.Contains(i),
                     PingText = "N/A",
                     PingTextColor = new SolidColorBrush(Colors.Gray)
-                };
-                serverDisplayItems.Add(displayItem);
+                });
             }
 
-            if (isDragging)
+            if (_isDragging)
             {
-                serverDisplayItems.Add(new ServerDisplayItem
+                _serverDisplayItems.Add(new ServerDisplayItem
                 {
                     DisplayText = "",
                     RegionIndex = -1,
@@ -316,11 +264,11 @@ namespace AULGK
                 });
             }
 
-            foreach (var item in serverDisplayItems)
+            foreach (var item in _serverDisplayItems)
             {
-                if (!string.IsNullOrEmpty(item.DisplayText) && item.RegionIndex < regions.Count)
+                if (!string.IsNullOrEmpty(item.DisplayText) && item.RegionIndex < _regions.Count)
                 {
-                    item.IsSelected = oldSelectedRegions.Contains(regions[item.RegionIndex]);
+                    item.IsSelected = oldSelectedRegions.Contains(_regions[item.RegionIndex]);
                     if (item.IsSelected && newSelectedIndex == -1)
                     {
                         newSelectedIndex = item.RegionIndex;
@@ -330,179 +278,630 @@ namespace AULGK
 
             if (newSelectedIndex == -1 && oldSelectedRegions.Any())
             {
-                newSelectedIndex = regions.FindIndex(r => oldSelectedRegions.Contains(r));
+                newSelectedIndex = _regions.FindIndex(r => oldSelectedRegions.Contains(r));
             }
 
-            ServerCountText.Text = $"当前共有 {regions.Count} 个服务器";
-            ServerWarningText.Visibility = regions.Count > 14 ? Visibility.Visible : Visibility.Collapsed;
+            ServerCountText.Text = $"当前共有 {_regions.Count} 个服务器";
+            ServerWarningText.Visibility = _regions.Count > 14 ? Visibility.Visible : Visibility.Collapsed;
+            ServerListBox.ItemsSource ??= _serverDisplayItems;
 
-            if (ServerListBox.ItemsSource == null)
+            if (newSelectedIndex >= 0 && newSelectedIndex < _regions.Count)
             {
-                ServerListBox.ItemsSource = serverDisplayItems;
-            }
-
-            if (newSelectedIndex >= 0 && newSelectedIndex < regions.Count)
-            {
-                isUpdatingSelection = true;
+                _isUpdatingSelection = true;
                 ServerListBox.SelectedIndex = newSelectedIndex;
-                isUpdatingSelection = false;
+                _isUpdatingSelection = false;
             }
 
             UpdateDeleteButtonVisibility();
             Dispatcher.InvokeAsync(UpdatePingDelays, DispatcherPriority.Background);
+            WriteLog($"更新服务器列表，共有 {_regions.Count} 个服务器");
         }
 
-        private string StripColorTags(string input)
-        {
-            if (string.IsNullOrEmpty(input))
-                return "";
-            return Regex.Replace(input, @"<color=#[0-9A-Fa-f]{6,8}>(.*?)</color>", "$1").Trim();
-        }
-
+        // 异步更新服务器延迟
         private async void UpdatePingDelays()
         {
-            if (isUpdatingPingDelays)
+            if (_isUpdatingPingDelays)
             {
-                WriteLog("UpdatePingDelays: Already running, skipping");
                 return;
             }
 
-            isUpdatingPingDelays = true;
-            WriteLog($"UpdatePingDelays: Starting with {regions.Count} regions, {serverDisplayItems.Count} items");
-            if (regions.Count == 0)
-            {
-                WriteLog("UpdatePingDelays: No regions available, exiting");
-                isUpdatingPingDelays = false;
-                return;
-            }
+            _isUpdatingPingDelays = true;
+            ServerListBox.UpdateLayout();
 
-            Dispatcher.Invoke(() => ServerListBox.UpdateLayout());
-            WriteLog($"UpdatePingDelays: ServerListBox layout updated, ItemContainerGenerator Status: {ServerListBox.ItemContainerGenerator.Status}");
-
-            for (int i = 0; i < serverDisplayItems.Count; i++)
+            foreach (var item in _serverDisplayItems)
             {
-                var item = serverDisplayItems[i];
-                if (item == null || string.IsNullOrEmpty(item.DisplayText) || item.RegionIndex >= regions.Count || item.RegionIndex < 0)
+                if (string.IsNullOrEmpty(item.DisplayText) || item.RegionIndex >= _regions.Count || item.RegionIndex < 0)
                 {
-                    WriteLog($"UpdatePingDelays: Skipping item {i} (null, empty text, or invalid regionIndex)");
                     continue;
                 }
 
-                var region = regions[item.RegionIndex];
-                WriteLog($"UpdatePingDelays: Processing item {i}, DisplayText={item.DisplayText}, regionIndex={item.RegionIndex}");
-
+                var region = _regions[item.RegionIndex];
                 item.PingText = "测延迟...";
                 item.PingTextColor = new SolidColorBrush(Colors.Gray);
-                WriteLog($"PingText for item {i} set to: 测延迟...");
 
                 try
                 {
-                    WriteLog($"Pinging server: {region.PingServer}");
                     var ping = await PingServerAsync(region.PingServer);
                     item.PingText = ping >= 0 ? $"{ping} ms" : "超时";
                     item.PingTextColor = ping >= 0 ? new SolidColorBrush(Colors.Green) : new SolidColorBrush(Colors.Red);
-                    WriteLog($"PingText for item {i} set to: {item.PingText}");
                 }
-                catch (Exception ex)
+                catch
                 {
                     item.PingText = "错误";
                     item.PingTextColor = new SolidColorBrush(Colors.Red);
-                    WriteLog($"PingText for item {i} set to: 错误");
-                    WriteLog($"Ping error for {region.PingServer}: {ex.Message}");
                 }
             }
 
-            WriteLog("UpdatePingDelays: Completed");
-            Dispatcher.Invoke(() => ServerListBox.InvalidateVisual());
-            isUpdatingPingDelays = false;
+            ServerListBox.InvalidateVisual();
+            _isUpdatingPingDelays = false;
+            WriteLog("服务器延迟更新完成");
         }
 
-        private void ServerListBox_Loaded(object sender, RoutedEventArgs e)
-        {
-            WriteLog("ServerListBox_Loaded: ServerListBox loaded, updating layout");
-            ServerListBox.UpdateLayout();
-            Dispatcher.InvokeAsync(() =>
-            {
-                WriteLog("ServerListBox_Loaded: Delayed UpdatePingDelays call");
-                UpdatePingDelays();
-            }, DispatcherPriority.Background);
-        }
-
-        private async Task<long> PingServerAsync(string host)
+        // 异步 Ping 服务器
+        private async Task<long> PingServerAsync(string? host)
         {
             if (string.IsNullOrEmpty(host))
             {
-                WriteLog($"PingServerAsync: Empty host provided");
                 return -1;
             }
-            using (var ping = new Ping())
+
+            using var ping = new Ping();
+            try
             {
-                try
-                {
-                    WriteLog($"Sending ping to {host}");
-                    var reply = await ping.SendPingAsync(host, 1000);
-                    WriteLog($"Ping reply from {host}: Status={reply.Status}, Time={reply.RoundtripTime}");
-                    return reply.Status == IPStatus.Success ? reply.RoundtripTime : -1;
-                }
-                catch (Exception ex)
-                {
-                    WriteLog($"PingServerAsync error for {host}: {ex.Message}");
-                    return -1;
-                }
+                var reply = await ping.SendPingAsync(host, 1000);
+                return reply.Status == IPStatus.Success ? reply.RoundtripTime : -1;
+            }
+            catch
+            {
+                return -1;
             }
         }
 
-        private T? FindVisualChild<T>(DependencyObject obj, string name) where T : DependencyObject
+        // 移除字符串中的颜色标签
+        private string StripColorTags(string input)
         {
-            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(obj); i++)
-            {
-                var child = VisualTreeHelper.GetChild(obj, i);
-                if (child is T target && (string)child.GetValue(FrameworkElement.NameProperty) == name)
-                {
-                    WriteLog($"FindVisualChild: Found {name} of type {typeof(T).Name}");
-                    return target;
-                }
-                var result = FindVisualChild<T>(child, name);
-                if (result != null)
-                    return result;
-            }
-            return null;
+            return string.IsNullOrEmpty(input)
+                ? ""
+                : Regex.Replace(input, @"<color=#[0-9A-Fa-f]{6,8}>(.*?)</color>", "$1").Trim();
         }
 
+        // 启动游戏
+        private void LaunchGame_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("steam://rungameid/945360") { UseShellExecute = true });
+                MessageBox.Show("正在启动 Among Us...", "启动游戏", MessageBoxButton.OK, MessageBoxImage.Information);
+                WriteLog("启动 Among Us 游戏");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"启动游戏失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                WriteLog($"启动游戏失败：{ex.Message}");
+            }
+        }
+
+        // 打开服务器编辑页面
+        private void OpenServerEditor_Click(object sender, RoutedEventArgs e)
+        {
+            MainPanel.Visibility = Visibility.Collapsed;
+            ServerPanel.Visibility = Visibility.Visible;
+            var slideInAnimation = (Storyboard)FindResource("SlideInServerPanel");
+            slideInAnimation.Completed += async (_, _) =>
+            {
+                await LoadPresetServersAsync();
+                UpdateServerList();
+                ServerListBox.SelectedIndex = -1;
+                foreach (ServerDisplayItem item in ServerListBox.Items)
+                {
+                    item.IsSelected = false;
+                }
+                _currentRegion = null;
+                DeleteButton.Visibility = Visibility.Hidden;
+                DetailPanel.Children.Clear();
+                DetailPanel.Children.Add(new TextBlock
+                {
+                    Text = "请从左侧列表中选择一个服务器进行配置",
+                    Foreground = new SolidColorBrush(Colors.Gray),
+                    FontSize = 14,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+            };
+            slideInAnimation.Begin();
+            WriteLog("打开服务器编辑页面");
+        }
+
+        // 返回主页面
+        private void BackButton_Click(object sender, RoutedEventArgs e)
+        {
+            ShowMainPage();
+            WriteLog("返回主页面");
+        }
+
+        // 新建服务器
+        private void NewServerButton_Click(object sender, RoutedEventArgs e)
+        {
+            var newServer = new RegionInfo
+            {
+                Name = "新服务器",
+                PingServer = "example.com",
+                Servers = new List<ServerInfo>
+                {
+                    new()
+                    {
+                        Name = "Http-1",
+                        Ip = "https://example.com",
+                        Port = 22023,
+                        UseDtls = false,
+                        Players = 0,
+                        ConnectionFailures = 0
+                    }
+                },
+                TranslateName = 1003
+            };
+
+            _regions.Add(newServer);
+            SaveData();
+            UpdateServerList();
+            ServerListBox.SelectedIndex = ServerListBox.Items.Count - 1;
+            ServerListBox.ScrollIntoView(ServerListBox.SelectedItem);
+            WriteLog("新建服务器");
+        }
+
+        // 添加预设服务器
+        private void AddPresetButton_Click(object sender, RoutedEventArgs e)
+        {
+            var selectedPresets = PresetServerListBox.Items.Cast<PresetServerDisplayItem>()
+                .Where(item => item.IsSelected)
+                .Select(item => _presetServers[item.PresetIndex])
+                .ToList();
+
+            if (!selectedPresets.Any())
+            {
+                MessageBox.Show("请至少勾选一个预设服务器！", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            foreach (var preset in selectedPresets)
+            {
+                int port = int.TryParse(preset.Port, out var parsedPort) ? parsedPort : 22023;
+                var newServer = new RegionInfo
+                {
+                    Name = preset.Name,
+                    PingServer = preset.PingServer,
+                    Servers = new List<ServerInfo>
+                    {
+                        new()
+                        {
+                            Name = "Http-1",
+                            Ip = $"https://{preset.PingServer}",
+                            Port = port,
+                            UseDtls = false,
+                            Players = 0,
+                            ConnectionFailures = 0
+                        }
+                    },
+                    TranslateName = 1003
+                };
+                _regions.Add(newServer);
+            }
+
+            SaveData();
+            UpdateServerList();
+            ServerListBox.SelectedIndex = _regions.Count - 1;
+            ServerListBox.ScrollIntoView(ServerListBox.SelectedItem);
+
+            foreach (PresetServerDisplayItem item in PresetServerListBox.Items)
+            {
+                item.IsSelected = false;
+            }
+            SelectAllPresetCheckBox.IsChecked = false;
+            PresetServerListBox.Items.Refresh();
+            WriteLog($"添加 {selectedPresets.Count} 个预设服务器");
+        }
+
+        // 删除选中的服务器
+        private void DeleteButton_Click(object sender, RoutedEventArgs e)
+        {
+            var selectedItems = ServerListBox.Items.Cast<ServerDisplayItem>()
+                .Where(item => item.IsSelected && !string.IsNullOrEmpty(item.DisplayText))
+                .ToList();
+
+            if (!selectedItems.Any())
+            {
+                return;
+            }
+
+            var serverNames = string.Join(", ", selectedItems.Select(item => StripColorTags(_regions[item.RegionIndex].Name ?? "")));
+            if (MessageBox.Show($"确定要删除以下服务器吗？\n{serverNames}", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            {
+                var indicesToRemove = selectedItems.Select(item => item.RegionIndex).OrderByDescending(i => i).ToList();
+                foreach (var index in indicesToRemove)
+                {
+                    _regions.RemoveAt(index);
+                }
+                SaveData();
+                UpdateServerList();
+                DeleteButton.Visibility = Visibility.Hidden;
+                DetailPanel.Children.Clear();
+                DetailPanel.Children.Add(new TextBlock
+                {
+                    Text = "请从左侧列表中选择一个服务器进行配置",
+                    Foreground = new SolidColorBrush(Colors.Gray),
+                    FontSize = 14,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+                _currentRegion = null;
+                WriteLog($"删除 {selectedItems.Count} 个服务器");
+            }
+        }
+
+        // 服务器列表选择改变
+        private void ServerListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (ServerListBox.SelectedIndex < 0 || ServerListBox.SelectedIndex >= _regions.Count || _isUpdatingSelection)
+            {
+                return;
+            }
+
+            _currentRegion = _regions[ServerListBox.SelectedIndex];
+            CreateServerDetailForm();
+            WriteLog($"选择服务器：{_currentRegion.Name}");
+        }
+
+        // 创建服务器详情表单
+        private void CreateServerDetailForm()
+        {
+            DetailPanel.Children.Clear();
+            var formGrid = new Grid { Margin = new Thickness(10) };
+            formGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
+            formGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
+            formGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            for (int i = 0; i < 5; i++)
+            {
+                formGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            }
+
+            var nameLabel = new TextBlock { Text = "服务器名称:", FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Colors.Navy) };
+            Grid.SetRow(nameLabel, 0);
+            Grid.SetColumn(nameLabel, 0);
+            _nameEntry = new TextBox { Text = _currentRegion?.Name ?? "", Width = 250 };
+            _nameEntry.TextChanged += (_, _) => ValidateName();
+            Grid.SetRow(_nameEntry, 0);
+            Grid.SetColumn(_nameEntry, 1);
+            _nameStatus = new TextBlock { Foreground = new SolidColorBrush(Colors.Red) };
+            Grid.SetRow(_nameStatus, 0);
+            Grid.SetColumn(_nameStatus, 2);
+
+            var pingLabel = new TextBlock { Text = "Ping服务器:", FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Colors.Navy) };
+            Grid.SetRow(pingLabel, 1);
+            Grid.SetColumn(pingLabel, 0);
+            _pingEntry = new TextBox { Text = _currentRegion?.PingServer ?? "", Width = 250 };
+            _pingEntry.TextChanged += (_, _) => ValidatePingServer();
+            Grid.SetRow(_pingEntry, 1);
+            Grid.SetColumn(_pingEntry, 1);
+            _pingStatus = new TextBlock { Foreground = new SolidColorBrush(Colors.Red) };
+            Grid.SetRow(_pingStatus, 1);
+            Grid.SetColumn(_pingStatus, 2);
+
+            var portLabel = new TextBlock { Text = "端口:", FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Colors.Navy) };
+            Grid.SetRow(portLabel, 2);
+            Grid.SetColumn(portLabel, 0);
+            _portEntry = new TextBox { Text = _currentRegion?.Servers[0].Port.ToString() ?? "", Width = 80 };
+            _portEntry.TextChanged += (_, _) => ValidatePort();
+            Grid.SetRow(_portEntry, 2);
+            Grid.SetColumn(_portEntry, 1);
+            _portStatus = new TextBlock { Foreground = new SolidColorBrush(Colors.Red) };
+            Grid.SetRow(_portStatus, 2);
+            Grid.SetColumn(_portStatus, 2);
+
+            var advancedButton = new Button { Content = "高级设置 ▼", Background = new SolidColorBrush(Colors.SlateGray), Foreground = new SolidColorBrush(Colors.White), Margin = new Thickness(0, 10, 0, 0) };
+            advancedButton.Click += ToggleAdvancedSettings;
+            Grid.SetRow(advancedButton, 3);
+            Grid.SetColumn(advancedButton, 0);
+            Grid.SetColumnSpan(advancedButton, 3);
+
+            formGrid.Children.Add(nameLabel);
+            formGrid.Children.Add(_nameEntry);
+            formGrid.Children.Add(_nameStatus);
+            formGrid.Children.Add(pingLabel);
+            formGrid.Children.Add(_pingEntry);
+            formGrid.Children.Add(_pingStatus);
+            formGrid.Children.Add(portLabel);
+            formGrid.Children.Add(_portEntry);
+            formGrid.Children.Add(_portStatus);
+            formGrid.Children.Add(advancedButton);
+
+            DetailPanel.Children.Add(formGrid);
+
+            _advancedPanel = new StackPanel { Visibility = Visibility.Collapsed, Margin = new Thickness(10, 0, 10, 0) };
+            var advancedGrid = new Grid();
+            advancedGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
+            advancedGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+            advancedGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            for (int i = 0; i < 4; i++)
+            {
+                advancedGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            }
+
+            var typeLabel = new TextBlock { Text = "$type:", Foreground = new SolidColorBrush(Colors.Navy) };
+            Grid.SetRow(typeLabel, 0);
+            Grid.SetColumn(typeLabel, 0);
+            var typeEntry = new TextBox { Text = _currentRegion?.Type ?? "", IsReadOnly = true, Width = 250 };
+            Grid.SetRow(typeEntry, 0);
+            Grid.SetColumn(typeEntry, 1);
+
+            var translateLabel = new TextBlock { Text = "TranslateName:", Foreground = new SolidColorBrush(Colors.Navy) };
+            Grid.SetRow(translateLabel, 1);
+            Grid.SetColumn(translateLabel, 0);
+            _translateEntry = new TextBox { Text = _currentRegion?.TranslateName.ToString() ?? "", Width = 80 };
+            _translateEntry.TextChanged += (_, _) => ValidateTranslateName();
+            Grid.SetRow(_translateEntry, 1);
+            Grid.SetColumn(_translateEntry, 1);
+            _translateStatus = new TextBlock { Foreground = new SolidColorBrush(Colors.Red) };
+            Grid.SetRow(_translateStatus, 1);
+            Grid.SetColumn(_translateStatus, 2);
+
+            var playersLabel = new TextBlock { Text = "Players:", Foreground = new SolidColorBrush(Colors.Navy) };
+            Grid.SetRow(playersLabel, 2);
+            Grid.SetColumn(playersLabel, 0);
+            var playersEntry = new TextBox { Text = _currentRegion?.Servers[0].Players.ToString() ?? "", IsReadOnly = true, Width = 80 };
+            Grid.SetRow(playersEntry, 2);
+            Grid.SetColumn(playersEntry, 1);
+
+            var failuresLabel = new TextBlock { Text = "ConnectionFailures:", Foreground = new SolidColorBrush(Colors.Navy) };
+            Grid.SetRow(failuresLabel, 3);
+            Grid.SetColumn(failuresLabel, 0);
+            var failuresEntry = new TextBox { Text = _currentRegion?.Servers[0].ConnectionFailures.ToString() ?? "", IsReadOnly = true, Width = 80 };
+            Grid.SetRow(failuresEntry, 3);
+            Grid.SetColumn(failuresEntry, 1);
+
+            advancedGrid.Children.Add(typeLabel);
+            advancedGrid.Children.Add(typeEntry);
+            advancedGrid.Children.Add(translateLabel);
+            advancedGrid.Children.Add(_translateEntry);
+            advancedGrid.Children.Add(_translateStatus);
+            advancedGrid.Children.Add(playersLabel);
+            advancedGrid.Children.Add(playersEntry);
+            advancedGrid.Children.Add(failuresLabel);
+            advancedGrid.Children.Add(failuresEntry);
+
+            _advancedPanel.Children.Add(advancedGrid);
+            DetailPanel.Children.Add(_advancedPanel);
+
+            ValidateName();
+            ValidatePingServer();
+            ValidatePort();
+            ValidateTranslateName();
+            WriteLog("创建服务器详情表单");
+        }
+
+        // 切换高级设置显示
+        private void ToggleAdvancedSettings(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button button)
+            {
+                return;
+            }
+
+            _advancedVisible = !_advancedVisible;
+            _advancedPanel!.Visibility = _advancedVisible ? Visibility.Visible : Visibility.Collapsed;
+            button.Content = _advancedVisible ? "高级设置 ▲" : "高级设置 ▼";
+            WriteLog($"切换高级设置显示：{_advancedVisible}");
+        }
+
+        // 验证服务器名称
+        private bool ValidateName()
+        {
+            if (_nameEntry == null || _nameStatus == null)
+            {
+                return false;
+            }
+
+            string name = _nameEntry.Text.Trim();
+            if (string.IsNullOrEmpty(name))
+            {
+                _nameStatus.Text = "✖ 名称不能为空";
+                _nameStatus.Foreground = new SolidColorBrush(Colors.Red);
+                return false;
+            }
+
+            _nameStatus.Text = "✔ 有效";
+            _nameStatus.Foreground = new SolidColorBrush(Colors.Green);
+            if (_currentRegion != null)
+            {
+                _currentRegion.Name = name;
+                _currentRegion.Servers[0].Name = "Http-1";
+                SaveData();
+                if (!_isUpdatingSelection)
+                {
+                    UpdateServerList();
+                }
+            }
+            return true;
+        }
+
+        // 验证 Ping 服务器地址
+        private bool ValidatePingServer()
+        {
+            if (_pingEntry == null || _pingStatus == null)
+            {
+                return false;
+            }
+
+            string server = _pingEntry.Text.Trim();
+            if (string.IsNullOrEmpty(server))
+            {
+                _pingStatus.Text = "✖ 服务器地址不能为空";
+                _pingStatus.Foreground = new SolidColorBrush(Colors.Red);
+                if (_currentRegion != null)
+                {
+                    _currentRegion.PingServer = server;
+                    _currentRegion.Servers[0].Ip = "";
+                    SaveData();
+                }
+                return false;
+            }
+
+            if (server.Length is < 1 or > 64)
+            {
+                _pingStatus.Text = "✖ 地址长度应为1-64个字符";
+                _pingStatus.Foreground = new SolidColorBrush(Colors.Red);
+                if (_currentRegion != null)
+                {
+                    _currentRegion.PingServer = server;
+                    _currentRegion.Servers[0].Ip = $"https://{server}";
+                    SaveData();
+                }
+                return false;
+            }
+
+            server = Regex.Replace(server, @"^https?://", "");
+            if (server.Contains('/'))
+            {
+                server = server.Split('/')[0];
+            }
+            _pingEntry.Text = server;
+
+            _pingStatus.Text = "✔ 有效";
+            _pingStatus.Foreground = new SolidColorBrush(Colors.Green);
+            if (_currentRegion != null)
+            {
+                _currentRegion.PingServer = server;
+                _currentRegion.Servers[0].Ip = $"https://{server}";
+                SaveData();
+                if (!_isUpdatingSelection)
+                {
+                    UpdateServerList();
+                }
+            }
+            return true;
+        }
+
+        // 验证端口
+        private bool ValidatePort()
+        {
+            if (_portEntry == null || _portStatus == null)
+            {
+                return false;
+            }
+
+            string portStr = _portEntry.Text.Trim();
+            if (string.IsNullOrEmpty(portStr))
+            {
+                _portStatus.Text = "✖ 端口不能为空";
+                _portStatus.Foreground = new SolidColorBrush(Colors.Red);
+                return false;
+            }
+
+            if (!int.TryParse(portStr, out int port) || port is < 0 or > 65535)
+            {
+                _portStatus.Text = "✖ 端口必须在0-65535之间";
+                _portStatus.Foreground = new SolidColorBrush(Colors.Red);
+                return false;
+            }
+
+            if (_currentRegion != null)
+            {
+                _currentRegion.Servers[0].Port = port;
+                SaveData();
+                if (!_isUpdatingSelection)
+                {
+                    UpdateServerList();
+                }
+            }
+            _portStatus.Text = "✔ 有效";
+            _portStatus.Foreground = new SolidColorBrush(Colors.Green);
+            return true;
+        }
+
+        // 验证 TranslateName
+        private bool ValidateTranslateName()
+        {
+            if (_translateEntry == null || _translateStatus == null)
+            {
+                return false;
+            }
+
+            string transStr = _translateEntry.Text.Trim();
+            if (string.IsNullOrEmpty(transStr))
+            {
+                _translateStatus.Text = "✖ 不能为空";
+                _translateStatus.Foreground = new SolidColorBrush(Colors.Red);
+                return false;
+            }
+
+            if (!int.TryParse(transStr, out int trans) || trans <= 1000)
+            {
+                _translateStatus.Text = "✖ 必须是大于1000的整数";
+                _translateStatus.Foreground = new SolidColorBrush(Colors.Red);
+                return false;
+            }
+
+            if (_currentRegion != null)
+            {
+                _currentRegion.TranslateName = trans;
+                SaveData();
+                if (!_isUpdatingSelection)
+                {
+                    UpdateServerList();
+                }
+            }
+            _translateStatus.Text = "✔ 有效";
+            _translateStatus.Foreground = new SolidColorBrush(Colors.Green);
+            return true;
+        }
+
+        // 服务器列表加载完成
+        private void ServerListBox_Loaded(object sender, RoutedEventArgs e)
+        {
+            ServerListBox.UpdateLayout();
+            Dispatcher.InvokeAsync(UpdatePingDelays, DispatcherPriority.Background);
+            WriteLog("服务器列表加载完成");
+        }
+
+        // 服务器复选框点击
         private void CheckBox_Click(object sender, RoutedEventArgs e)
         {
             if (sender is CheckBox checkBox && checkBox.DataContext is ServerDisplayItem item)
             {
                 item.IsSelected = checkBox.IsChecked ?? false;
-                WriteLog($"CheckBox_Click: Server {regions[item.RegionIndex].Name} IsSelected={item.IsSelected}");
                 UpdateDeleteButtonVisibility();
+                WriteLog($"服务器 {_regions[item.RegionIndex].Name} 选中状态：{item.IsSelected}");
             }
         }
 
+        // 预设服务器复选框点击
         private void PresetCheckBox_Click(object sender, RoutedEventArgs e)
         {
             if (sender is CheckBox checkBox && checkBox.DataContext is PresetServerDisplayItem item)
             {
                 item.IsSelected = checkBox.IsChecked ?? false;
-                WriteLog($"PresetCheckBox_Click: Preset server {presetServers[item.PresetIndex].Name} IsSelected={item.IsSelected}");
                 UpdateSelectAllCheckBoxState();
+                WriteLog($"预设服务器 {_presetServers[item.PresetIndex].Name} 选中状态：{item.IsSelected}");
             }
         }
 
+        // 全选预设服务器
         private void SelectAllPresetCheckBox_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is CheckBox checkBox)
+            if (sender is not CheckBox checkBox)
             {
-                bool isChecked = checkBox.IsChecked ?? false;
-                foreach (PresetServerDisplayItem item in PresetServerListBox.Items)
-                {
-                    item.IsSelected = isChecked;
-                }
-                WriteLog($"SelectAllPresetCheckBox_Click: Set all preset servers IsSelected={isChecked}");
-                PresetServerListBox.Items.Refresh();
+                return;
             }
+
+            bool isChecked = checkBox.IsChecked ?? false;
+            foreach (PresetServerDisplayItem item in PresetServerListBox.Items)
+            {
+                item.IsSelected = isChecked;
+            }
+            PresetServerListBox.Items.Refresh();
+            WriteLog($"全选预设服务器：{isChecked}");
         }
 
+        // 更新全选复选框状态
         private void UpdateSelectAllCheckBoxState()
         {
             var allItems = PresetServerListBox.Items.Cast<PresetServerDisplayItem>().ToList();
@@ -518,624 +917,275 @@ namespace AULGK
             }
         }
 
+        // 更新删除按钮显示
         private void UpdateDeleteButtonVisibility()
         {
-            bool hasSelected = ServerListBox.Items.Cast<ServerDisplayItem>()
-                .Any(item => item.IsSelected && !string.IsNullOrEmpty(item.DisplayText));
-            DeleteButton.Visibility = hasSelected ? Visibility.Visible : Visibility.Hidden;
+            DeleteButton.Visibility = _serverDisplayItems.Any(item => item.IsSelected && !string.IsNullOrEmpty(item.DisplayText))
+                ? Visibility.Visible
+                : Visibility.Hidden;
         }
 
+        // 拖拽开始
         private void ServerListBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            dragStartPoint = e.GetPosition(null);
+            _dragStartPoint = e.GetPosition(null);
         }
 
+        // 拖拽移动
         private void ServerListBox_MouseMove(object sender, MouseEventArgs e)
         {
-            if (e.LeftButton != MouseButtonState.Pressed || dragStartPoint == null)
+            if (e.LeftButton != MouseButtonState.Pressed || _dragStartPoint == null)
+            {
                 return;
+            }
 
             Point currentPosition = e.GetPosition(null);
-            Vector diff = dragStartPoint.Value - currentPosition;
+            Vector diff = _dragStartPoint.Value - currentPosition;
 
-            if (Math.Abs(diff.X) > SystemParameters.MinimumHorizontalDragDistance ||
-                Math.Abs(diff.Y) > SystemParameters.MinimumVerticalDragDistance)
+            if (Math.Abs(diff.X) <= SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(diff.Y) <= SystemParameters.MinimumVerticalDragDistance)
             {
-                ListBox listBox = sender as ListBox;
-                ListBoxItem listBoxItem = FindAncestor<ListBoxItem>((DependencyObject)e.OriginalSource);
-                if (listBoxItem != null && listBoxItem.DataContext is ServerDisplayItem draggedItem && !string.IsNullOrEmpty(draggedItem.DisplayText))
-                {
-                    // 清除所有复选框
-                    foreach (ServerDisplayItem item in ServerListBox.Items)
-                    {
-                        item.IsSelected = false;
-                    }
-                    UpdateDeleteButtonVisibility();
-                    ServerListBox.Items.Refresh();
-                    WriteLog("ClearCheckBoxesOnDragStart: Cleared all server checkboxes");
-
-                    // 添加空白占位项
-                    ServerListBox.Items.Add(new ServerDisplayItem
-                    {
-                        DisplayText = "",
-                        RegionIndex = -1,
-                        IsSelected = false
-                    });
-                    isDragging = true;
-                    WriteLog("DragStart: Added placeholder item at bottom");
-
-                    DragDrop.DoDragDrop(listBoxItem, draggedItem, DragDropEffects.Move);
-                    dragStartPoint = null;
-                }
+                return;
             }
+
+            if (sender is not ListBox listBox)
+            {
+                return;
+            }
+
+            var listBoxItem = FindAncestor<ListBoxItem>((DependencyObject)e.OriginalSource);
+            if (listBoxItem?.DataContext is not ServerDisplayItem draggedItem || string.IsNullOrEmpty(draggedItem.DisplayText))
+            {
+                return;
+            }
+
+            foreach (ServerDisplayItem item in ServerListBox.Items)
+            {
+                item.IsSelected = false;
+            }
+            UpdateDeleteButtonVisibility();
+            ServerListBox.Items.Refresh();
+
+            _serverDisplayItems.Add(new ServerDisplayItem
+            {
+                DisplayText = "",
+                RegionIndex = -1,
+                IsSelected = false
+            });
+            _isDragging = true;
+
+            DragDrop.DoDragDrop(listBoxItem, draggedItem, DragDropEffects.Move);
+            _dragStartPoint = null;
+            WriteLog("开始拖拽服务器");
         }
 
+        // 拖拽进入
         private void ServerListBox_DragOver(object sender, DragEventArgs e)
         {
-            if (e.Data.GetData(typeof(ServerDisplayItem)) is ServerDisplayItem draggedItem)
-            {
-                e.Effects = DragDropEffects.Move;
-
-                ListBox listBox = sender as ListBox;
-                if (listBox == null)
-                {
-                    e.Effects = DragDropEffects.None;
-                    return;
-                }
-
-                Point mousePos = e.GetPosition(listBox);
-                int insertIndex = -1;
-
-                // 计算插入位置
-                for (int i = 0; i < listBox.Items.Count; i++)
-                {
-                    if (listBox.ItemContainerGenerator.ContainerFromIndex(i) is ListBoxItem item)
-                    {
-                        Point itemPos = item.PointToScreen(new Point(0, 0));
-                        Point relativePos = listBox.PointToScreen(new Point(0, 0));
-                        double itemTop = itemPos.Y - relativePos.Y;
-                        double itemHeight = item.ActualHeight;
-
-                        if (mousePos.Y >= itemTop && mousePos.Y < itemTop + itemHeight / 2)
-                        {
-                            insertIndex = i;
-                            break;
-                        }
-                        else if (mousePos.Y >= itemTop + itemHeight / 2 && mousePos.Y < itemTop + itemHeight)
-                        {
-                            insertIndex = i + 1;
-                            break;
-                        }
-                    }
-                }
-
-                if (insertIndex == -1 && mousePos.Y > 0)
-                {
-                    insertIndex = listBox.Items.Count;
-                }
-
-                // 更新插入线显示
-                if (insertIndex != lastInsertIndex)
-                {
-                    // 隐藏所有插入线
-                    for (int i = 0; i < listBox.Items.Count; i++)
-                    {
-                        if (listBox.ItemContainerGenerator.ContainerFromIndex(i) is ListBoxItem item)
-                        {
-                            var insertLine = FindVisualChild<Rectangle>(item, "InsertLine");
-                            if (insertLine != null)
-                            {
-                                insertLine.Visibility = Visibility.Collapsed;
-                            }
-                        }
-                    }
-
-                    // 显示当前插入位置的线
-                    if (insertIndex >= 0 && insertIndex <= listBox.Items.Count)
-                    {
-                        int displayIndex = insertIndex < listBox.Items.Count ? insertIndex : listBox.Items.Count - 1;
-                        if (listBox.ItemContainerGenerator.ContainerFromIndex(displayIndex) is ListBoxItem targetItem)
-                        {
-                            var insertLine = FindVisualChild<Rectangle>(targetItem, "InsertLine");
-                            if (insertLine != null)
-                            {
-                                insertLine.Visibility = Visibility.Visible;
-                            }
-                        }
-                    }
-
-                    lastInsertIndex = insertIndex;
-                }
-            }
-            else
+            if (e.Data.GetData(typeof(ServerDisplayItem)) is not ServerDisplayItem)
             {
                 e.Effects = DragDropEffects.None;
-            }
-            e.Handled = true;
-        }
-
-        private void ServerListBox_Drop(object sender, DragEventArgs e)
-        {
-            if (e.Data.GetData(typeof(ServerDisplayItem)) is ServerDisplayItem draggedItem)
-            {
-                ListBox listBox = sender as ListBox;
-                ListBoxItem targetItem = FindAncestor<ListBoxItem>((DependencyObject)e.OriginalSource);
-
-                int newIndex = -1;
-                if (targetItem != null)
-                {
-                    ServerDisplayItem targetData = (ServerDisplayItem)targetItem.DataContext;
-                    newIndex = string.IsNullOrEmpty(targetData.DisplayText) ? regions.Count : targetData.RegionIndex;
-                    Point mousePos = e.GetPosition(targetItem);
-                    if (mousePos.Y > targetItem.ActualHeight / 2 && !string.IsNullOrEmpty(targetData.DisplayText))
-                    {
-                        newIndex++;
-                    }
-                }
-                else
-                {
-                    newIndex = regions.Count;
-                }
-
-                int oldIndex = draggedItem.RegionIndex;
-                if (oldIndex == newIndex || oldIndex + 1 == newIndex)
-                {
-                    ResetDragVisualEffects(listBox);
-                    return;
-                }
-
-                WriteLog($"DragDrop: Moving server {regions[oldIndex].Name} from index {oldIndex} to {newIndex}");
-
-                RegionInfo draggedRegion = regions[oldIndex];
-                regions.RemoveAt(oldIndex);
-                if (newIndex > oldIndex)
-                {
-                    newIndex--;
-                }
-                regions.Insert(newIndex, draggedRegion);
-
-                SaveData();
-                UpdateServerList();
-            }
-
-            ResetDragVisualEffects(sender as ListBox);
-        }
-
-        private void ResetDragVisualEffects(ListBox listBox)
-        {
-            if (listBox == null)
+                e.Handled = true;
                 return;
+            }
 
-            // 隐藏所有插入线
+            if (sender is not ListBox listBox)
+            {
+                e.Effects = DragDropEffects.None;
+                return;
+            }
+
+            e.Effects = DragDropEffects.Move;
+            Point mousePos = e.GetPosition(listBox);
+            int insertIndex = -1;
+
             for (int i = 0; i < listBox.Items.Count; i++)
             {
                 if (listBox.ItemContainerGenerator.ContainerFromIndex(i) is ListBoxItem item)
                 {
-                    var insertLine = FindVisualChild<Rectangle>(item, "InsertLine");
-                    if (insertLine != null)
+                    Point itemPos = item.PointToScreen(new Point(0, 0));
+                    Point relativePos = listBox.PointToScreen(new Point(0, 0));
+                    double itemTop = itemPos.Y - relativePos.Y;
+                    double itemHeight = item.ActualHeight;
+
+                    if (mousePos.Y >= itemTop && mousePos.Y < itemTop + itemHeight / 2)
+                    {
+                        insertIndex = i;
+                        break;
+                    }
+
+                    if (mousePos.Y >= itemTop + itemHeight / 2 && mousePos.Y < itemTop + itemHeight)
+                    {
+                        insertIndex = i + 1;
+                        break;
+                    }
+                }
+            }
+
+            if (insertIndex == -1 && mousePos.Y > 0)
+            {
+                insertIndex = listBox.Items.Count;
+            }
+
+            if (insertIndex == _lastInsertIndex)
+            {
+                return;
+            }
+
+            for (int i = 0; i < listBox.Items.Count; i++)
+            {
+                if (listBox.ItemContainerGenerator.ContainerFromIndex(i) is ListBoxItem item)
+                {
+                    if (FindVisualChild<Rectangle>(item, "InsertLine") is { } insertLine)
                     {
                         insertLine.Visibility = Visibility.Collapsed;
                     }
                 }
             }
-            lastInsertIndex = -1;
 
-            // 移除空白占位项
-            if (isDragging)
+            if (insertIndex >= 0 && insertIndex <= listBox.Items.Count)
+            {
+                int displayIndex = insertIndex < listBox.Items.Count ? insertIndex : listBox.Items.Count - 1;
+                if (listBox.ItemContainerGenerator.ContainerFromIndex(displayIndex) is ListBoxItem targetItem)
+                {
+                    if (FindVisualChild<Rectangle>(targetItem, "InsertLine") is { } insertLine)
+                    {
+                        insertLine.Visibility = Visibility.Visible;
+                    }
+                }
+            }
+
+            _lastInsertIndex = insertIndex;
+            e.Handled = true;
+        }
+
+        // 拖拽释放
+        private void ServerListBox_Drop(object sender, DragEventArgs e)
+        {
+            if (e.Data.GetData(typeof(ServerDisplayItem)) is not ServerDisplayItem draggedItem)
+            {
+                return;
+            }
+
+            if (sender is not ListBox listBox)
+            {
+                return;
+            }
+
+            var targetItem = FindAncestor<ListBoxItem>((DependencyObject)e.OriginalSource);
+            int newIndex = -1;
+            if (targetItem != null)
+            {
+                var targetData = (ServerDisplayItem)targetItem.DataContext;
+                newIndex = string.IsNullOrEmpty(targetData.DisplayText) ? _regions.Count : targetData.RegionIndex;
+                Point mousePos = e.GetPosition(targetItem);
+                if (mousePos.Y > targetItem.ActualHeight / 2 && !string.IsNullOrEmpty(targetData.DisplayText))
+                {
+                    newIndex++;
+                }
+            }
+            else
+            {
+                newIndex = _regions.Count;
+            }
+
+            int oldIndex = draggedItem.RegionIndex;
+            if (oldIndex == newIndex || oldIndex + 1 == newIndex)
+            {
+                ResetDragVisualEffects(listBox);
+                return;
+            }
+
+            var draggedRegion = _regions[oldIndex];
+            _regions.RemoveAt(oldIndex);
+            if (newIndex > oldIndex)
+            {
+                newIndex--;
+            }
+            _regions.Insert(newIndex, draggedRegion);
+
+            SaveData();
+            UpdateServerList();
+            ResetDragVisualEffects(listBox);
+            WriteLog($"拖拽服务器 {_regions[newIndex].Name} 到位置 {newIndex}");
+        }
+
+        // 重置拖拽视觉效果
+        private void ResetDragVisualEffects(ListBox? listBox)
+        {
+            if (listBox == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < listBox.Items.Count; i++)
+            {
+                if (listBox.ItemContainerGenerator.ContainerFromIndex(i) is ListBoxItem item)
+                {
+                    if (FindVisualChild<Rectangle>(item, "InsertLine") is { } insertLine)
+                    {
+                        insertLine.Visibility = Visibility.Collapsed;
+                    }
+                }
+            }
+            _lastInsertIndex = -1;
+
+            if (_isDragging)
             {
                 var placeholder = ServerListBox.Items.Cast<ServerDisplayItem>().LastOrDefault(item => string.IsNullOrEmpty(item.DisplayText));
                 if (placeholder != null)
                 {
                     ServerListBox.Items.Remove(placeholder);
-                    WriteLog("DragEnd: Removed placeholder item");
                 }
-                isDragging = false;
+                _isDragging = false;
             }
+            WriteLog("重置拖拽视觉效果");
         }
 
-        private static T FindAncestor<T>(DependencyObject current) where T : DependencyObject
+        // 查找视觉树中的控件
+        private T? FindVisualChild<T>(DependencyObject obj, string name) where T : DependencyObject
         {
-            while (current != null && !(current is T))
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(obj); i++)
+            {
+                var child = VisualTreeHelper.GetChild(obj, i);
+                if (child is T target && (string)child.GetValue(FrameworkElement.NameProperty) == name)
+                {
+                    return target;
+                }
+                var result = FindVisualChild<T>(child, name);
+                if (result != null)
+                {
+                    return result;
+                }
+            }
+            return null;
+        }
+
+        // 查找父级控件
+        private static T? FindAncestor<T>(DependencyObject? current) where T : DependencyObject
+        {
+            while (current != null && current is not T)
             {
                 current = VisualTreeHelper.GetParent(current);
             }
             return current as T;
         }
 
-        private void BackButton_Click(object sender, RoutedEventArgs e)
+        // 记录日志
+        private void WriteLog(string message)
         {
-            ShowMainPage();
-        }
-
-        private void NewServerButton_Click(object sender, RoutedEventArgs e)
-        {
-            var newServer = new RegionInfo
+            try
             {
-                Name = "新服务器",
-                PingServer = "example.com",
-                Servers = new List<ServerInfo>
-                {
-                    new ServerInfo
-                    {
-                        Name = "Http-1",
-                        Ip = "https://example.com",
-                        Port = 22023,
-                        UseDtls = false,
-                        Players = 0,
-                        ConnectionFailures = 0
-                    }
-                },
-                TranslateName = 1003
-            };
-
-            regions.Add(newServer);
-            SaveData();
-            UpdateServerList();
-            ServerListBox.SelectedIndex = ServerListBox.Items.Count - 1;
-            ServerListBox.ScrollIntoView(ServerListBox.SelectedItem);
-        }
-
-        private void AddPresetButton_Click(object sender, RoutedEventArgs e)
-        {
-            var selectedPresets = PresetServerListBox.Items.Cast<PresetServerDisplayItem>()
-                .Where(item => item.IsSelected)
-                .Select(item => presetServers[item.PresetIndex])
-                .ToList();
-
-            if (!selectedPresets.Any())
-            {
-                MessageBox.Show("请至少勾选一个预设服务器！", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
+                string logEntry = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}\n";
+                File.AppendAllText(_logPath, logEntry);
             }
-
-            int startIndex = regions.Count;
-            foreach (var preset in selectedPresets)
+            catch
             {
-                int port = 22023; // 默认端口
-                if (!string.IsNullOrEmpty(preset.Port) && int.TryParse(preset.Port, out int parsedPort))
-                {
-                    port = parsedPort;
-                }
-                else
-                {
-                    WriteLog($"AddPresetButton_Click: Invalid or missing port for {preset.Name}, using default 22023");
-                }
-
-                var newServer = new RegionInfo
-                {
-                    Name = preset.Name,
-                    PingServer = preset.PingServer,
-                    Servers = new List<ServerInfo>
-            {
-                new ServerInfo
-                {
-                    Name = "Http-1",
-                    Ip = $"https://{preset.PingServer}",
-                    Port = port,
-                    UseDtls = false,
-                    Players = 0,
-                    ConnectionFailures = 0
-                }
-            },
-                    TranslateName = 1003
-                };
-                regions.Add(newServer);
-            }
-
-            WriteLog($"AddPresetButton_Click: Added {selectedPresets.Count} preset servers: [{string.Join(", ", selectedPresets.Select(p => StripColorTags(p.Name ?? "null")))}]");
-
-            SaveData();
-            UpdateServerList();
-            ServerListBox.SelectedIndex = regions.Count - 1;
-            ServerListBox.ScrollIntoView(ServerListBox.SelectedItem);
-
-            foreach (PresetServerDisplayItem item in PresetServerListBox.Items)
-            {
-                item.IsSelected = false;
-            }
-            SelectAllPresetCheckBox.IsChecked = false;
-            PresetServerListBox.Items.Refresh();
-        }
-
-        private void ServerListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (ServerListBox.SelectedIndex < 0 || ServerListBox.SelectedIndex >= regions.Count || isUpdatingSelection)
-                return;
-
-            currentRegion = regions[ServerListBox.SelectedIndex];
-            CreateServerDetailForm();
-        }
-
-        private void CreateServerDetailForm()
-        {
-            DetailPanel.Children.Clear();
-
-            var formGrid = new Grid { Margin = new Thickness(10) };
-            formGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-            formGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
-            formGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            for (int i = 0; i < 5; i++)
-                formGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-            var nameLabel = new TextBlock { Text = "服务器名称:", FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Colors.Navy) };
-            Grid.SetRow(nameLabel, 0);
-            Grid.SetColumn(nameLabel, 0);
-            nameEntry = new TextBox { Text = currentRegion?.Name ?? "", Width = 250 };
-            nameEntry.TextChanged += (s, e) => ValidateName();
-            Grid.SetRow(nameEntry, 0);
-            Grid.SetColumn(nameEntry, 1);
-            nameStatus = new TextBlock { Foreground = new SolidColorBrush(Colors.Red) };
-            Grid.SetRow(nameStatus, 0);
-            Grid.SetColumn(nameStatus, 2);
-
-            var pingLabel = new TextBlock { Text = "Ping服务器:", FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Colors.Navy) };
-            Grid.SetRow(pingLabel, 1);
-            Grid.SetColumn(pingLabel, 0);
-            pingEntry = new TextBox { Text = currentRegion?.PingServer ?? "", Width = 250 };
-            pingEntry.TextChanged += (s, e) => ValidatePingServer();
-            Grid.SetRow(pingEntry, 1);
-            Grid.SetColumn(pingEntry, 1);
-            pingStatus = new TextBlock { Foreground = new SolidColorBrush(Colors.Red) };
-            Grid.SetRow(pingStatus, 1);
-            Grid.SetColumn(pingStatus, 2);
-
-            var portLabel = new TextBlock { Text = "端口:", FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Colors.Navy) };
-            Grid.SetRow(portLabel, 2);
-            Grid.SetColumn(portLabel, 0);
-            portEntry = new TextBox { Text = currentRegion?.Servers[0].Port.ToString() ?? "", Width = 80 };
-            portEntry.TextChanged += (s, e) => ValidatePort();
-            Grid.SetRow(portEntry, 2);
-            Grid.SetColumn(portEntry, 1);
-            portStatus = new TextBlock { Foreground = new SolidColorBrush(Colors.Red) };
-            Grid.SetRow(portStatus, 2);
-            Grid.SetColumn(portStatus, 2);
-
-            var advancedButton = new Button { Content = "高级设置 ▼", Background = new SolidColorBrush(Colors.SlateGray), Foreground = new SolidColorBrush(Colors.White), Margin = new Thickness(0, 10, 0, 0) };
-            advancedButton.Click += (s, e) => ToggleAdvancedSettings(advancedButton);
-            Grid.SetRow(advancedButton, 3);
-            Grid.SetColumn(advancedButton, 0);
-            Grid.SetColumnSpan(advancedButton, 3);
-
-            formGrid.Children.Add(nameLabel);
-            formGrid.Children.Add(nameEntry);
-            formGrid.Children.Add(nameStatus);
-            formGrid.Children.Add(pingLabel);
-            formGrid.Children.Add(pingEntry);
-            formGrid.Children.Add(pingStatus);
-            formGrid.Children.Add(portLabel);
-            formGrid.Children.Add(portEntry);
-            formGrid.Children.Add(portStatus);
-            formGrid.Children.Add(advancedButton);
-
-            DetailPanel.Children.Add(formGrid);
-
-            advancedPanel = new StackPanel { Visibility = Visibility.Collapsed, Margin = new Thickness(10, 0, 10, 0) };
-            var advancedGrid = new Grid();
-            advancedGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-            advancedGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
-            advancedGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            for (int i = 0; i < 4; i++)
-                advancedGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-            var typeLabel = new TextBlock { Text = "$type:", Foreground = new SolidColorBrush(Colors.Navy) };
-            Grid.SetRow(typeLabel, 0);
-            Grid.SetColumn(typeLabel, 0);
-            var typeEntry = new TextBox { Text = currentRegion?.Type ?? "", IsReadOnly = true, Width = 250 };
-            Grid.SetRow(typeEntry, 0);
-            Grid.SetColumn(typeEntry, 1);
-
-            var translateLabel = new TextBlock { Text = "TranslateName:", Foreground = new SolidColorBrush(Colors.Navy) };
-            Grid.SetRow(translateLabel, 1);
-            Grid.SetColumn(translateLabel, 0);
-            translateEntry = new TextBox { Text = currentRegion?.TranslateName.ToString() ?? "", Width = 80 };
-            translateEntry.TextChanged += (s, e) => ValidateTranslateName();
-            Grid.SetRow(translateEntry, 1);
-            Grid.SetColumn(translateEntry, 1);
-            translateStatus = new TextBlock { Foreground = new SolidColorBrush(Colors.Red) };
-            Grid.SetRow(translateStatus, 1);
-            Grid.SetColumn(translateStatus, 2);
-
-            var playersLabel = new TextBlock { Text = "Players:", Foreground = new SolidColorBrush(Colors.Navy) };
-            Grid.SetRow(playersLabel, 2);
-            Grid.SetColumn(playersLabel, 0);
-            var playersEntry = new TextBox { Text = currentRegion?.Servers[0].Players.ToString() ?? "", IsReadOnly = true, Width = 80 };
-            Grid.SetRow(playersEntry, 2);
-            Grid.SetColumn(playersEntry, 1);
-
-            var failuresLabel = new TextBlock { Text = "ConnectionFailures:", Foreground = new SolidColorBrush(Colors.Navy) };
-            Grid.SetRow(failuresLabel, 3);
-            Grid.SetColumn(failuresLabel, 0);
-            var failuresEntry = new TextBox { Text = currentRegion?.Servers[0].ConnectionFailures.ToString() ?? "", IsReadOnly = true, Width = 80 };
-            Grid.SetRow(failuresEntry, 3);
-            Grid.SetColumn(failuresEntry, 1);
-
-            advancedGrid.Children.Add(typeLabel);
-            advancedGrid.Children.Add(typeEntry);
-            advancedGrid.Children.Add(translateLabel);
-            advancedGrid.Children.Add(translateEntry);
-            advancedGrid.Children.Add(translateStatus);
-            advancedGrid.Children.Add(playersLabel);
-            advancedGrid.Children.Add(playersEntry);
-            advancedGrid.Children.Add(failuresLabel);
-            advancedGrid.Children.Add(failuresEntry);
-
-            advancedPanel.Children.Add(advancedGrid);
-            DetailPanel.Children.Add(advancedPanel);
-
-            ValidateName();
-            ValidatePingServer();
-            ValidatePort();
-            ValidateTranslateName();
-        }
-
-        private void ToggleAdvancedSettings(Button button)
-        {
-            advancedVisible = !advancedVisible;
-            advancedPanel!.Visibility = advancedVisible ? Visibility.Visible : Visibility.Collapsed;
-            button.Content = advancedVisible ? "高级设置 ▲" : "高级设置 ▼";
-        }
-
-        private bool ValidateName()
-        {
-            string name = nameEntry!.Text.Trim();
-            if (string.IsNullOrEmpty(name))
-            {
-                nameStatus!.Text = "✖ 名称不能为空";
-                nameStatus.Foreground = new SolidColorBrush(Colors.Red);
-                return false;
-            }
-            nameStatus!.Text = "✔ 有效";
-            nameStatus.Foreground = new SolidColorBrush(Colors.Green);
-            if (currentRegion != null)
-            {
-                currentRegion.Name = name;
-                currentRegion.Servers[0].Name = "Http-1";
-                SaveData();
-                if (!isUpdatingSelection)
-                    UpdateServerList();
-            }
-            return true;
-        }
-
-        private bool ValidatePingServer()
-        {
-            string server = pingEntry!.Text.Trim();
-            if (string.IsNullOrEmpty(server))
-            {
-                pingStatus!.Text = "✖ 服务器地址不能为空";
-                pingStatus.Foreground = new SolidColorBrush(Colors.Red);
-                if (currentRegion != null)
-                {
-                    currentRegion.PingServer = server;
-                    currentRegion.Servers[0].Ip = string.IsNullOrEmpty(server) ? "" : $"https://{server}";
-                    SaveData();
-                }
-                return false;
-            }
-            if (server.Length < 1 || server.Length > 64)
-            {
-                pingStatus!.Text = "✖ 地址长度应为1-64个字符";
-                pingStatus.Foreground = new SolidColorBrush(Colors.Red);
-                if (currentRegion != null)
-                {
-                    currentRegion.PingServer = server;
-                    currentRegion.Servers[0].Ip = string.IsNullOrEmpty(server) ? "" : $"https://{server}";
-                    SaveData();
-                }
-                return false;
-            }
-
-            server = Regex.Replace(server, @"^https?://", "");
-            if (server.Contains("/"))
-                server = server.Split('/')[0];
-            pingEntry!.Text = server;
-
-            pingStatus!.Text = "✔ 有效";
-            pingStatus.Foreground = new SolidColorBrush(Colors.Green);
-
-            if (currentRegion != null)
-            {
-                currentRegion.PingServer = server;
-                currentRegion.Servers[0].Ip = $"https://{server}";
-                SaveData();
-                if (!isUpdatingSelection)
-                    UpdateServerList();
-            }
-            return true;
-        }
-
-        private bool ValidatePort()
-        {
-            string portStr = portEntry!.Text.Trim();
-            if (string.IsNullOrEmpty(portStr))
-            {
-                portStatus!.Text = "✖ 端口不能为空";
-                portStatus.Foreground = new SolidColorBrush(Colors.Red);
-                return false;
-            }
-
-            if (!int.TryParse(portStr, out int port) || port < 0 || port > 65535)
-            {
-                portStatus!.Text = "✖ 端口必须在0-65535之间";
-                portStatus.Foreground = new SolidColorBrush(Colors.Red);
-                return false;
-            }
-
-            if (currentRegion != null)
-            {
-                currentRegion.Servers[0].Port = port;
-                SaveData();
-                if (!isUpdatingSelection)
-                    UpdateServerList();
-            }
-            portStatus!.Text = "✔ 有效";
-            portStatus.Foreground = new SolidColorBrush(Colors.Green);
-            return true;
-        }
-
-        private bool ValidateTranslateName()
-        {
-            string transStr = translateEntry!.Text.Trim();
-            if (string.IsNullOrEmpty(transStr))
-            {
-                translateStatus!.Text = "✖ 不能为空";
-                translateStatus.Foreground = new SolidColorBrush(Colors.Red);
-                return false;
-            }
-
-            if (!int.TryParse(transStr, out int trans) || trans <= 1000)
-            {
-                translateStatus!.Text = "✖ 必须是大于1000的整数";
-                translateStatus.Foreground = new SolidColorBrush(Colors.Red);
-                return false;
-            }
-
-            if (currentRegion != null)
-            {
-                currentRegion.TranslateName = trans;
-                SaveData();
-                if (!isUpdatingSelection)
-                    UpdateServerList();
-            }
-            translateStatus!.Text = "✔ 有效";
-            translateStatus.Foreground = new SolidColorBrush(Colors.Green);
-            return true;
-        }
-
-        private void DeleteButton_Click(object sender, RoutedEventArgs e)
-        {
-            var selectedItems = ServerListBox.Items.Cast<ServerDisplayItem>()
-                .Where(item => item.IsSelected && !string.IsNullOrEmpty(item.DisplayText))
-                .ToList();
-
-            if (!selectedItems.Any())
-                return;
-
-            var serverNames = string.Join(", ", selectedItems.Select(item => StripColorTags(regions[item.RegionIndex].Name ?? "")));
-            if (MessageBox.Show($"确定要删除以下服务器吗？\n{serverNames}", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
-            {
-                var indicesToRemove = selectedItems.Select(item => item.RegionIndex).OrderByDescending(i => i).ToList();
-                foreach (var index in indicesToRemove)
-                {
-                    regions.RemoveAt(index);
-                }
-                SaveData();
-                UpdateServerList();
-                DeleteButton.Visibility = Visibility.Hidden;
-                DetailPanel.Children.Clear();
-                var emptyLabel = new TextBlock
-                {
-                    Text = "请从左侧列表中选择一个服务器进行配置",
-                    Foreground = new SolidColorBrush(Colors.Gray),
-                    FontSize = 14,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                DetailPanel.Children.Add(emptyLabel);
-                currentRegion = null;
+                // 忽略日志写入错误
             }
         }
 
+        // 数据模型
         public class RegionData
         {
             public int CurrentRegionIdx { get; set; }
@@ -1161,19 +1211,20 @@ namespace AULGK
             public int Players { get; set; }
             public int ConnectionFailures { get; set; }
         }
-    public class PresetServer
-    {
-        [JsonPropertyName("name")]
-        public string? Name { get; set; }
 
-        [JsonPropertyName("pingServer")]
-        public string? PingServer { get; set; }
+        public class PresetServer
+        {
+            [JsonPropertyName("name")]
+            public string? Name { get; set; }
 
-        [JsonPropertyName("port")]
-        public string? Port { get; set; }
-    }
+            [JsonPropertyName("pingServer")]
+            public string? PingServer { get; set; }
 
-    public class ServerDisplayItem : INotifyPropertyChanged
+            [JsonPropertyName("port")]
+            public string? Port { get; set; }
+        }
+
+        public class ServerDisplayItem : INotifyPropertyChanged
         {
             private string? _displayText;
             private string? _pingText;
