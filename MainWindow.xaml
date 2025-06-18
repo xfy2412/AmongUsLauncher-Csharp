@@ -103,11 +103,9 @@
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
                                             <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" Margin="5" VerticalAlignment="Center" Click="CheckBox_Click" Visibility="{Binding DisplayText, Converter={StaticResource EmptyTextToVisibilityConverter}}"/>
                                             <TextBlock Grid.Column="1" Text="{Binding DisplayText}" VerticalAlignment="Center" Margin="5,0"/>
-                                            <TextBlock x:Name="PingTextBlock" Grid.Column="2" Text="{Binding PingText, FallbackValue=N/A}" MinWidth="50" Foreground="Gray" Margin="5,0,0,0" VerticalAlignment="Center" Visibility="{Binding DisplayText, Converter={StaticResource EmptyTextToVisibilityConverter}}"/>
                                         </Grid>
                                     </Grid>
                                 </DataTemplate>

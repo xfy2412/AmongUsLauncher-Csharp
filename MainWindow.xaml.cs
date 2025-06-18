@@ -3,7 +3,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
-using System.Net.NetworkInformation;
 using System.Runtime.CompilerServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -55,7 +54,7 @@ namespace AULGK
         private readonly string _presetServersUrl = "https://mxzc.cloud:35249/preset_servers.json";
         private readonly string _appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         private readonly string _filePath;
-        private readonly string _logPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"..\LocalLow\Innersloth\Among Us\AULGK.log");
+        private readonly string _logPath;
         private readonly ObservableCollection<ServerDisplayItem> _serverDisplayItems = new();
         private readonly ObservableCollection<PresetServerDisplayItem> _presetServerDisplayItems = new();
         private List<RegionInfo> _regions = new();
@@ -68,7 +67,6 @@ namespace AULGK
         private bool _advancedVisible;
         private bool _isUpdatingSelection;
         private bool _isDragging;
-        private bool _isUpdatingPingDelays;
         private Point? _dragStartPoint;
         private int _lastInsertIndex = -1;
 
@@ -76,6 +74,7 @@ namespace AULGK
         {
             InitializeComponent();
             _filePath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\regionInfo.json");
+            _logPath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\AULGK.log");
             InitializeApplication();
         }
 
@@ -246,9 +245,7 @@ namespace AULGK
                 {
                     DisplayText = StripColorTags(_regions[i].Name ?? ""),
                     RegionIndex = i,
-                    IsSelected = selectedIndices.Contains(i),
-                    PingText = "N/A",
-                    PingTextColor = new SolidColorBrush(Colors.Gray)
+                    IsSelected = selectedIndices.Contains(i)
                 });
             }
 
@@ -258,9 +255,7 @@ namespace AULGK
                 {
                     DisplayText = "",
                     RegionIndex = -1,
-                    IsSelected = false,
-                    PingText = "",
-                    PingTextColor = new SolidColorBrush(Colors.Transparent)
+                    IsSelected = false
                 });
             }
 
@@ -293,68 +288,7 @@ namespace AULGK
             }
 
             UpdateDeleteButtonVisibility();
-            Dispatcher.InvokeAsync(UpdatePingDelays, DispatcherPriority.Background);
             WriteLog($"更新服务器列表，共有 {_regions.Count} 个服务器");
-        }
-
-        // 异步更新服务器延迟
-        private async void UpdatePingDelays()
-        {
-            if (_isUpdatingPingDelays)
-            {
-                return;
-            }
-
-            _isUpdatingPingDelays = true;
-            ServerListBox.UpdateLayout();
-
-            foreach (var item in _serverDisplayItems)
-            {
-                if (string.IsNullOrEmpty(item.DisplayText) || item.RegionIndex >= _regions.Count || item.RegionIndex < 0)
-                {
-                    continue;
-                }
-
-                var region = _regions[item.RegionIndex];
-                item.PingText = "测延迟...";
-                item.PingTextColor = new SolidColorBrush(Colors.Gray);
-
-                try
-                {
-                    var ping = await PingServerAsync(region.PingServer);
-                    item.PingText = ping >= 0 ? $"{ping} ms" : "超时";
-                    item.PingTextColor = ping >= 0 ? new SolidColorBrush(Colors.Green) : new SolidColorBrush(Colors.Red);
-                }
-                catch
-                {
-                    item.PingText = "错误";
-                    item.PingTextColor = new SolidColorBrush(Colors.Red);
-                }
-            }
-
-            ServerListBox.InvalidateVisual();
-            _isUpdatingPingDelays = false;
-            WriteLog("服务器延迟更新完成");
-        }
-
-        // 异步 Ping 服务器
-        private async Task<long> PingServerAsync(string? host)
-        {
-            if (string.IsNullOrEmpty(host))
-            {
-                return -1;
-            }
-
-            using var ping = new Ping();
-            try
-            {
-                var reply = await ping.SendPingAsync(host, 1000);
-                return reply.Status == IPStatus.Success ? reply.RoundtripTime : -1;
-            }
-            catch
-            {
-                return -1;
-            }
         }
 
         // 移除字符串中的颜色标签
@@ -589,7 +523,7 @@ namespace AULGK
             var portLabel = new TextBlock { Text = "端口:", FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Colors.Navy) };
             Grid.SetRow(portLabel, 2);
             Grid.SetColumn(portLabel, 0);
-            _portEntry = new TextBox { Text = _currentRegion?.Servers[0].Port.ToString() ?? "", Width = 80 };
+            _portEntry = new TextBox { Text = _currentRegion?.Servers?[0]?.Port.ToString() ?? "", Width = 80 };
             _portEntry.TextChanged += (_, _) => ValidatePort();
             Grid.SetRow(_portEntry, 2);
             Grid.SetColumn(_portEntry, 1);
@@ -647,14 +581,14 @@ namespace AULGK
             var playersLabel = new TextBlock { Text = "Players:", Foreground = new SolidColorBrush(Colors.Navy) };
             Grid.SetRow(playersLabel, 2);
             Grid.SetColumn(playersLabel, 0);
-            var playersEntry = new TextBox { Text = _currentRegion?.Servers[0].Players.ToString() ?? "", IsReadOnly = true, Width = 80 };
+            var playersEntry = new TextBox { Text = _currentRegion?.Servers?[0]?.Players.ToString() ?? "", IsReadOnly = true, Width = 80 };
             Grid.SetRow(playersEntry, 2);
             Grid.SetColumn(playersEntry, 1);
 
             var failuresLabel = new TextBlock { Text = "ConnectionFailures:", Foreground = new SolidColorBrush(Colors.Navy) };
             Grid.SetRow(failuresLabel, 3);
             Grid.SetColumn(failuresLabel, 0);
-            var failuresEntry = new TextBox { Text = _currentRegion?.Servers[0].ConnectionFailures.ToString() ?? "", IsReadOnly = true, Width = 80 };
+            var failuresEntry = new TextBox { Text = _currentRegion?.Servers?[0]?.ConnectionFailures.ToString() ?? "", IsReadOnly = true, Width = 80 };
             Grid.SetRow(failuresEntry, 3);
             Grid.SetColumn(failuresEntry, 1);
 
@@ -858,7 +792,6 @@ namespace AULGK
         private void ServerListBox_Loaded(object sender, RoutedEventArgs e)
         {
             ServerListBox.UpdateLayout();
-            Dispatcher.InvokeAsync(UpdatePingDelays, DispatcherPriority.Background);
             WriteLog("服务器列表加载完成");
         }
 
@@ -1227,8 +1160,6 @@ namespace AULGK
         public class ServerDisplayItem : INotifyPropertyChanged
         {
             private string? _displayText;
-            private string? _pingText;
-            private Brush? _pingTextColor;
 
             public string? DisplayText
             {
@@ -1236,26 +1167,6 @@ namespace AULGK
                 set
                 {
                     _displayText = value;
-                    OnPropertyChanged();
-                }
-            }
-
-            public string? PingText
-            {
-                get => _pingText;
-                set
-                {
-                    _pingText = value;
-                    OnPropertyChanged();
-                }
-            }
-
-            public Brush? PingTextColor
-            {
-                get => _pingTextColor;
-                set
-                {
-                    _pingTextColor = value;
                     OnPropertyChanged();
                 }
             }
