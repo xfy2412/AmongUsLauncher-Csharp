@@ -13,7 +13,7 @@ UI目前还十分简陋，因为是这两天赶出来的(~~本来是想搬PCL2�
 作者是高中生，issues和pullrequest有时间会看，可能不会及时回复。
 
 # 使用
-从https://github.com/xfy2412/AmongUsLauncher/relaese下载，或者从作者的123网盘下载，安装完成后即可使用
+从[relaese](https://github.com/xfy2412/AmongUsLauncher/relaese)下载，或者从作者的[123网盘](https://www.123865.com/s/J04lVv-F1wKH)下载，安装完成后即可使用
 
 # 贡献代码
 
