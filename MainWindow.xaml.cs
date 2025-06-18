@@ -59,7 +59,7 @@ namespace AULGK
         private readonly ObservableCollection<PresetServerDisplayItem> _presetServerDisplayItems = new();
         private List<RegionInfo> _regions = new();
         private List<PresetServer> _presetServers = new();
-        private int _currentRegionIdx = 0;//这个注释用于更新这行代码
+        private int _currentRegionIdx = 3;
         private RegionInfo? _currentRegion;
         private TextBox? _nameEntry, _pingEntry, _portEntry, _translateEntry;
         private TextBlock? _nameStatus, _pingStatus, _portStatus, _translateStatus;
@@ -1127,6 +1127,7 @@ namespace AULGK
 
         public class RegionInfo
         {
+            [JsonPropertyName("$type")]
             public string Type { get; set; } = "StaticHttpRegionInfo, Assembly-CSharp";
             public string? Name { get; set; }
             public string? PingServer { get; set; }
