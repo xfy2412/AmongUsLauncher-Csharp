@@ -19,6 +19,8 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using System.IO.Compression;
 using IOPath = System.IO.Path;
+using System.Net.Http.Headers;
+using System.Linq;
 
 namespace AULGK
 {

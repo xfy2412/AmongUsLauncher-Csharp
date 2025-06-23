@@ -68,12 +68,12 @@ namespace AULGK
             bool Match(string path)
                 => IOPath.GetFileName(path).Contains(keyword, StringComparison.OrdinalIgnoreCase);
 
-            var matchedPath = Directory.EnumerateFiles(_pluginsDir, "*.dll*")
+            var matchedPath = Directory.EnumerateFiles(_pluginsDir, "*.dll*", SearchOption.AllDirectories)
                                         .FirstOrDefault(Match);
 
             if (matchedPath == null)
             {
-                matchedPath = Directory.EnumerateFiles(_pluginsDir, "*.dll.disabled")
+                matchedPath = Directory.EnumerateFiles(_pluginsDir, "*.dll.disabled", SearchOption.AllDirectories)
                                         .FirstOrDefault(Match);
             }
 
