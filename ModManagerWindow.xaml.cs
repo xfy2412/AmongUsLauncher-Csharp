@@ -63,15 +63,18 @@ namespace AULGK
         private void CheckInstallState(ModInfo mod)
         {
             if (string.IsNullOrEmpty(_pluginsDir)) return;
-            // 寻找与模组名称前缀匹配的 dll
-            var dllFiles = Directory.GetFiles(_pluginsDir, "*.dll*");
-            string? matchedPath = dllFiles.FirstOrDefault(f => IOPath.GetFileNameWithoutExtension(f).StartsWith(mod.Name, StringComparison.OrdinalIgnoreCase));
+            string keyword = string.IsNullOrEmpty(mod.FileMatch) ? mod.Name : mod.FileMatch;
+
+            bool Match(string path)
+                => IOPath.GetFileName(path).Contains(keyword, StringComparison.OrdinalIgnoreCase);
+
+            var matchedPath = Directory.EnumerateFiles(_pluginsDir, "*.dll*")
+                                        .FirstOrDefault(Match);
 
             if (matchedPath == null)
             {
-                // 尝试匹配禁用文件
-                var disabled = Directory.GetFiles(_pluginsDir, "*.dll.disabled");
-                matchedPath = disabled.FirstOrDefault(f => IOPath.GetFileNameWithoutExtension(f).StartsWith(mod.Name, StringComparison.OrdinalIgnoreCase));
+                matchedPath = Directory.EnumerateFiles(_pluginsDir, "*.dll.disabled")
+                                        .FirstOrDefault(Match);
             }
 
             bool isInstalled = matchedPath != null;
@@ -289,6 +292,7 @@ namespace AULGK
             [JsonPropertyName("description")] public string Description { get => _description; set { _description = value; OnPropertyChanged(); } }
             [JsonPropertyName("downloadUrl")] public string DownloadUrl { get => _downloadUrl; set { _downloadUrl = value; OnPropertyChanged(); } } // 可为空，将由 GitHub API 填充
             [JsonPropertyName("repo")] public string Repo { get; set; } = ""; // owner/repo 格式
+            [JsonPropertyName("fileMatch")] public string FileMatch { get; set; } = ""; // dll 文件名匹配关键字，可选
             private bool _isInstalled;
             public bool IsInstalled { get => _isInstalled; set { _isInstalled = value; OnPropertyChanged(); } }
             private bool _isEnabled;
