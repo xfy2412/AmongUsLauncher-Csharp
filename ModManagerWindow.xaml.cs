@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
@@ -12,6 +13,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Diagnostics;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace AULGK
 {
@@ -48,12 +50,17 @@ namespace AULGK
             {
                 var json = await _httpClient.GetStringAsync(_modsUrl);
                 var list = JsonSerializer.Deserialize<List<ModInfo>>(json) ?? new();
+
+                // 并行拉取 GitHub Release 信息，提高加载速度
+                await Task.WhenAll(list.Select(UpdateModFromGitHubAsync));
+
+                // 统一检查本地安装状态并刷新 UI
                 foreach (var m in list)
                 {
-                    await UpdateModFromGitHubAsync(m);
                     CheckInstallState(m);
                     _mods.Add(m);
                 }
+
                 StatusText.Text = $"已加载 {_mods.Count} 个模组";
             }
             catch (Exception ex)
@@ -65,34 +72,63 @@ namespace AULGK
         private void CheckInstallState(ModInfo mod)
         {
             if (string.IsNullOrEmpty(_pluginsDir)) return;
-            string keyword = string.IsNullOrEmpty(mod.FileMatch) ? mod.Name : mod.FileMatch;
+
+            // 根据 fileMatch 生成匹配委托，支持：
+            // 1. 通配符 * ?
+            // 2. 正则表达式
+            // 3. 普通子串包含
 
             bool Match(string path)
-                => IOPath.GetFileName(path).Contains(keyword, StringComparison.OrdinalIgnoreCase);
+            {
+                string fileName = IOPath.GetFileName(path);
 
-            var matchedPath = Directory.EnumerateFiles(_pluginsDir, "*.dll*", SearchOption.AllDirectories)
-                                        .FirstOrDefault(Match);
+                string pattern = string.IsNullOrEmpty(mod.FileMatch) ? mod.Name : mod.FileMatch;
+
+                if (string.IsNullOrEmpty(pattern)) return false;
+
+                // 通配符
+                if (pattern.Contains('*') || pattern.Contains('?'))
+                {
+                    // 将通配符转换为正则
+                    string regexPattern = "^" + Regex.Escape(pattern)
+                                                    .Replace("\\*", ".*")
+                                                    .Replace("\\?", ".") + "$";
+                    return Regex.IsMatch(fileName, regexPattern, RegexOptions.IgnoreCase);
+                }
+
+                // 尝试作为正则表达式
+                try
+                {
+                    return Regex.IsMatch(fileName, pattern, RegexOptions.IgnoreCase);
+                }
+                catch
+                {
+                    // 非法正则则回退到包含判断
+                    return fileName.Contains(pattern, StringComparison.OrdinalIgnoreCase);
+                }
+            }
+
+            string? matchedPath = Directory.EnumerateFiles(_pluginsDir, "*.dll*", SearchOption.AllDirectories)
+                                           .FirstOrDefault(Match);
 
             if (matchedPath == null)
             {
                 matchedPath = Directory.EnumerateFiles(_pluginsDir, "*.dll.disabled", SearchOption.AllDirectories)
-                                        .FirstOrDefault(Match);
+                                           .FirstOrDefault(Match);
             }
 
             bool isInstalled = matchedPath != null;
             bool isEnabled = matchedPath != null && !matchedPath.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase);
 
+            // 记录实际安装路径，方便后续操作
+            mod.InstalledFilePath = matchedPath ?? string.Empty;
+
             mod.IsInstalled = isInstalled;
             mod.IsEnabled = isEnabled;
 
-            if (isInstalled)
-            {
-                mod.InstallState = mod.IsEnabled ? "✅ 已启用" : "☑️ 已禁用";
-            }
-            else
-            {
-                mod.InstallState = "➖ 未安装";
-            }
+            mod.InstallState = isInstalled
+                ? (isEnabled ? "✅ 已启用" : "☑️ 已禁用")
+                : "➖ 未安装";
         }
 
         private void ModListBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -143,9 +179,30 @@ namespace AULGK
             try
             {
                 StatusText.Text = $"下载 {mod.Name}...";
-                string fileName = IOPath.GetFileName(new Uri(mod.DownloadUrl).LocalPath);
+
+                string downloadUrl = mod.DownloadUrl;
+                string fileName = IOPath.GetFileName(new Uri(downloadUrl.Replace("https://ghproxy.com/", "")) // 去掉代理前缀再取文件名
+                                                         .LocalPath);
+
                 string tmp = IOPath.Combine(IOPath.GetTempPath(), fileName);
-                await using (var remote = await _httpClient.GetStreamAsync(mod.DownloadUrl))
+
+                // 尝试下载，若 gh-proxy 失败则自动回退
+                async Task<Stream> OpenStreamAsync(string url)
+                {
+                    try
+                    {
+                        return await _httpClient.GetStreamAsync(url);
+                    }
+                    catch (HttpRequestException) when (url.StartsWith("https://ghproxy.com/", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // gh-proxy 失败，尝试原始 URL
+                        string fallback = url.Substring("https://ghproxy.com/".Length);
+                        StatusText.Text = "镜像下载失败，正在直接连接 GitHub...";
+                        return await _httpClient.GetStreamAsync(fallback);
+                    }
+                }
+
+                await using (var remote = await OpenStreamAsync(downloadUrl))
                 await using (var local = File.Create(tmp))
                 {
                     await remote.CopyToAsync(local);
@@ -158,11 +215,14 @@ namespace AULGK
                 }
                 else if (ext == ".dll")
                 {
-                    var dest = IOPath.Combine(_pluginsDir, mod.FileName);
+                    var dest = IOPath.Combine(_pluginsDir, fileName);
                     File.Copy(tmp, dest, true);
+                    mod.InstalledFilePath = dest;
                 }
 
                 File.Delete(tmp);
+                // 更新安装状态（包括记录路径）
+                CheckInstallState(mod);
                 StatusText.Text = $"已安装 {mod.Name}";
             }
             catch (Exception ex)
@@ -174,8 +234,15 @@ namespace AULGK
         private void Toggle_Click(object sender, RoutedEventArgs e)
         {
             if (DetailPanel.DataContext is not ModInfo mod) return;
-            string dll = IOPath.Combine(_pluginsDir, mod.FileName);
-            string disabled = dll + ".disabled";
+            // 优先使用已记录的实际安装路径
+            string basePath = string.IsNullOrEmpty(mod.InstalledFilePath)
+                ? IOPath.Combine(_pluginsDir, mod.FileName)
+                : (mod.InstalledFilePath.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase)
+                    ? mod.InstalledFilePath[..^(".disabled".Length)]
+                    : mod.InstalledFilePath);
+
+            string dll = basePath;
+            string disabled = basePath + ".disabled";
             try
             {
                 if (mod.IsEnabled)
@@ -202,8 +269,14 @@ namespace AULGK
         {
             if (DetailPanel.DataContext is not ModInfo mod) return;
 
-            string dllPath = IOPath.Combine(_pluginsDir, mod.FileName);
-            string disabledPath = dllPath + ".disabled";
+            string basePath = string.IsNullOrEmpty(mod.InstalledFilePath)
+                ? IOPath.Combine(_pluginsDir, mod.FileName)
+                : (mod.InstalledFilePath.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase)
+                    ? mod.InstalledFilePath[..^(".disabled".Length)]
+                    : mod.InstalledFilePath);
+
+            string dllPath = basePath;
+            string disabledPath = basePath + ".disabled";
 
             try
             {
@@ -305,6 +378,12 @@ namespace AULGK
             public bool IsEnabled { get => _isEnabled; set { _isEnabled = value; OnPropertyChanged(); } }
             public string InstallState { get => _installState; set { _installState = value; OnPropertyChanged(); } }
             public string FileName => Name + ".dll";
+
+            // 实际安装路径，用于简写文件名或多版本场景
+            [JsonIgnore]
+            private string _installedFilePath = "";
+            [JsonIgnore]
+            public string InstalledFilePath { get => _installedFilePath; set { _installedFilePath = value; OnPropertyChanged(); } }
 
             public event PropertyChangedEventHandler? PropertyChanged;
             private void OnPropertyChanged([CallerMemberName] string? prop = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(prop));
