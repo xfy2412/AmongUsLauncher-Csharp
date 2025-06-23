@@ -1442,12 +1442,13 @@ namespace AULGK
         private class AppSettings
         {
             public bool SuppressBepInExPrompt { get; set; }
+            public string? GitHubToken { get; set; }
         }
 
         // 打开模组管理窗口
         private void OpenModManager_Click(object sender, RoutedEventArgs e)
         {
-            var win = new ModManagerWindow(_gameInstallPath, _httpClient);
+            var win = new ModManagerWindow(_gameInstallPath, _httpClient, _settings.GitHubToken);
             win.Owner = this;
             win.ShowDialog();
             EvaluateBepInExUI(); // 安装或卸载模组可能影响BepInEx目录

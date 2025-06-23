@@ -23,12 +23,14 @@ namespace AULGK
         private string _pluginsDir = "";
         private readonly ObservableCollection<ModInfo> _mods = new();
         public ModInfo? SelectedMod { get; set; }
+        private readonly string? _gitHubToken;
 
-        public ModManagerWindow(string? gamePath, HttpClient client)
+        public ModManagerWindow(string? gamePath, HttpClient client, string? gitHubToken)
         {
             InitializeComponent();
             _gamePath = gamePath;
             _httpClient = client;
+            _gitHubToken = gitHubToken;
             if (_gamePath != null)
             {
                 _pluginsDir = IOPath.Combine(_gamePath, "BepInEx", "plugins");
@@ -156,7 +158,8 @@ namespace AULGK
                 }
                 else if (ext == ".dll")
                 {
-                    File.Copy(tmp, IOPath.Combine(_pluginsDir, fileName), true);
+                    var dest = IOPath.Combine(_pluginsDir, mod.FileName);
+                    File.Copy(tmp, dest, true);
                 }
 
                 File.Delete(tmp);
@@ -230,8 +233,11 @@ namespace AULGK
             if (string.IsNullOrEmpty(mod.Repo)) return;
             try
             {
-                var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{mod.Repo}/releases/latest");
+                var request = new HttpRequestMessage(HttpMethod.Get,
+                    $"https://api.github.com/repos/{mod.Repo}/releases/latest");
                 request.Headers.UserAgent.Add(new ProductInfoHeaderValue("AULGK", "1.0"));
+                if (!string.IsNullOrWhiteSpace(_gitHubToken))
+                    request.Headers.Authorization = new AuthenticationHeaderValue("token", _gitHubToken);
                 var resp = await _httpClient.SendAsync(request);
                 resp.EnsureSuccessStatusCode();
                 var json = await resp.Content.ReadAsStringAsync();
@@ -248,12 +254,12 @@ namespace AULGK
                     if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(url)) continue;
                     if (name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
                     {
-                        dllUrl = url;
+                        dllUrl = "https://ghproxy.com/" + url;
                         break; // 优先 DLL
                     }
                     if (zipUrl == null && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
                     {
-                        zipUrl = url;
+                        zipUrl = "https://ghproxy.com/" + url;
                     }
                 }
                 mod.DownloadUrl = dllUrl ?? zipUrl ?? mod.DownloadUrl;
