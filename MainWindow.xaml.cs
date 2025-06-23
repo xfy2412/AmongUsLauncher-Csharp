@@ -16,6 +16,9 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using Microsoft.Win32;
+using System.IO.Compression;
+using IOPath = System.IO.Path;
 
 namespace AULGK
 {
@@ -69,23 +72,31 @@ namespace AULGK
         private bool _isDragging;
         private Point? _dragStartPoint;
         private int _lastInsertIndex = -1;
+        private readonly string _bepInExDownloadUrl = "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.3/BepInEx_win_x64_5.4.23.3.zip"; // BepInEx x64 5.4.21 版本
+        private string? _gameInstallPath; // Among Us 安装目录
+        private readonly string _settingsPath;
+        private AppSettings _settings = new();
 
         public MainWindow()
         {
             InitializeComponent();
             _filePath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\regionInfo.json");
             _logPath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\AULGK.log");
+            _settingsPath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\AULGK.settings.json");
             InitializeApplication();
         }
 
         // 初始化应用程序
         private void InitializeApplication()
         {
+            LoadSettings();
             LoadData();
+            DetectGameInstallPath();
             InitializePresetServers();
             Dispatcher.InvokeAsync(async () =>
             {
                 await LoadPresetServersAsync();
+                EvaluateBepInExUI();
                 ShowMainPage();
             }, DispatcherPriority.Background);
             WriteLog("应用程序初始化完成");
@@ -1216,6 +1227,228 @@ namespace AULGK
             {
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
             }
+        }
+
+        // 检测 Among Us 安装路径
+        private void DetectGameInstallPath()
+        {
+            _gameInstallPath = GetAmongUsInstallPath();
+            if (_gameInstallPath == null)
+            {
+                WriteLog("未在 Steam 库中检测到 Among Us 安装目录");
+            }
+            else
+            {
+                WriteLog($"检测到 Among Us 安装目录：{_gameInstallPath}");
+            }
+        }
+
+        // 通过读取注册表与 libraryfolders.vdf 寻找游戏目录，仅支持 Steam
+        private string? GetAmongUsInstallPath()
+        {
+            try
+            {
+                var steamPath = GetSteamPathFromRegistry();
+                if (string.IsNullOrEmpty(steamPath) || !Directory.Exists(steamPath)) return null;
+
+                // 默认库
+                var defaultPath = IOPath.Combine(steamPath, "steamapps", "common", "Among Us");
+                if (Directory.Exists(defaultPath)) return defaultPath;
+
+                // 额外库
+                var libraryFile = IOPath.Combine(steamPath, "steamapps", "libraryfolders.vdf");
+                if (!File.Exists(libraryFile)) return null;
+                var lines = File.ReadAllLines(libraryFile);
+                foreach (var line in lines)
+                {
+                    var match = Regex.Match(line, "\\\"path\\\"\\s*\\\"([^\\\"]+)\\\"");
+                    if (match.Success)
+                    {
+                        var path = match.Groups[1].Value.Replace("\\\\", "\\");
+                        var gamePath = IOPath.Combine(path, "steamapps", "common", "Among Us");
+                        if (Directory.Exists(gamePath)) return gamePath;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteLog($"检测游戏路径时出错：{ex.Message}");
+            }
+            return null;
+        }
+
+        // 从注册表读取 Steam 安装路径
+        private static string? GetSteamPathFromRegistry()
+        {
+            string? path = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\\Valve\\Steam")?.GetValue("SteamPath") as string;
+            if (!string.IsNullOrEmpty(path)) return path.Replace('/', '\\');
+            path = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\\WOW6432Node\\Valve\\Steam")?.GetValue("InstallPath") as string;
+            return path?.Replace('/', '\\');
+        }
+
+        // 确保 BepInEx 已安装，如未安装则自动下载并解压
+        private async Task EnsureBepInExAsync()
+        {
+            if (_gameInstallPath == null) return; // 未检测到游戏
+            var bepInExDir = IOPath.Combine(_gameInstallPath, "BepInEx");
+            if (Directory.Exists(bepInExDir))
+            {
+                WriteLog("已检测到 BepInEx，无需安装");
+                MessageBox.Show("已检测到 BepInEx，无需安装", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            try
+            {
+                WriteLog("开始下载 BepInEx...");
+                string tempZip = IOPath.GetTempFileName();
+                await using (var remote = await _httpClient.GetStreamAsync(_bepInExDownloadUrl))
+                await using (var local = File.Create(tempZip))
+                {
+                    await remote.CopyToAsync(local);
+                }
+
+                WriteLog("下载完成，开始解压...");
+                ZipFile.ExtractToDirectory(tempZip, _gameInstallPath, true);
+                File.Delete(tempZip);
+                WriteLog("BepInEx 安装完成");
+                MessageBox.Show("BepInEx 安装完成！", "完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                WriteLog($"安装 BepInEx 失败：{ex.Message}");
+                MessageBox.Show($"自动安装 BepInEx 失败：{ex.Message}\n请尝试手动安装。", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        // 加载用户设置
+        private void LoadSettings()
+        {
+            try
+            {
+                if (File.Exists(_settingsPath))
+                {
+                    string json = File.ReadAllText(_settingsPath);
+                    _settings = JsonSerializer.Deserialize<AppSettings>(json) ?? new();
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteLog($"加载设置失败：{ex.Message}");
+                _settings = new();
+            }
+        }
+
+        // 保存用户设置
+        private void SaveSettings()
+        {
+            try
+            {
+                Directory.CreateDirectory(IOPath.GetDirectoryName(_settingsPath)!);
+                string json = JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(_settingsPath, json);
+            }
+            catch (Exception ex)
+            {
+                WriteLog($"保存设置失败：{ex.Message}");
+            }
+        }
+
+        // 根据状态更新安装 BepInEx 的按钮与复选框可见性
+        private void EvaluateBepInExUI()
+        {
+            if (_settings.SuppressBepInExPrompt)
+            {
+                InstallBepInExButton.Visibility = Visibility.Collapsed;
+                UninstallBepInExButton.Visibility = Visibility.Collapsed;
+                SuppressBepInExCheckBox.Visibility = Visibility.Collapsed;
+                BepInExInfoText.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            if (_gameInstallPath == null)
+            {
+                InstallBepInExButton.Visibility = Visibility.Collapsed;
+                UninstallBepInExButton.Visibility = Visibility.Collapsed;
+                SuppressBepInExCheckBox.Visibility = Visibility.Collapsed;
+                BepInExInfoText.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            bool installed = Directory.Exists(IOPath.Combine(_gameInstallPath, "BepInEx"));
+            InstallBepInExButton.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
+            UninstallBepInExButton.Visibility = installed ? Visibility.Visible : Visibility.Collapsed;
+            SuppressBepInExCheckBox.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
+            BepInExInfoText.Visibility = (InstallBepInExButton.Visibility == Visibility.Visible || UninstallBepInExButton.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
+            SuppressBepInExCheckBox.IsChecked = _settings.SuppressBepInExPrompt;
+        }
+
+        // "安装 BepInEx"按钮点击
+        private async void InstallBepInEx_Click(object sender, RoutedEventArgs e)
+        {
+            InstallBepInExButton.IsEnabled = false;
+            await EnsureBepInExAsync();
+            EvaluateBepInExUI();
+        }
+
+        // "卸载 BepInEx"按钮点击
+        private void UninstallBepInEx_Click(object sender, RoutedEventArgs e)
+        {
+            if (_gameInstallPath == null)
+            {
+                MessageBox.Show("未检测到游戏安装路径。", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            var bepDir = IOPath.Combine(_gameInstallPath, "BepInEx");
+            if (!Directory.Exists(bepDir))
+            {
+                MessageBox.Show("未检测到 BepInEx，无需卸载。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                EvaluateBepInExUI();
+                return;
+            }
+
+            if (MessageBox.Show("确定要卸载 BepInEx 吗？这将删除 BepInEx 整个目录。", "确认卸载", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            try
+            {
+                Directory.Delete(bepDir, true);
+                WriteLog("已卸载 BepInEx");
+                MessageBox.Show("已卸载 BepInEx。", "完成", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                WriteLog($"卸载 BepInEx 失败：{ex.Message}");
+                MessageBox.Show($"卸载失败：{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+
+            EvaluateBepInExUI();
+        }
+
+        // "不再提示"复选框点击
+        private void SuppressBepInExCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            _settings.SuppressBepInExPrompt = SuppressBepInExCheckBox.IsChecked ?? false;
+            SaveSettings();
+            EvaluateBepInExUI();
+        }
+
+        // 用户设置模型
+        private class AppSettings
+        {
+            public bool SuppressBepInExPrompt { get; set; }
+        }
+
+        // 打开模组管理窗口
+        private void OpenModManager_Click(object sender, RoutedEventArgs e)
+        {
+            var win = new ModManagerWindow(_gameInstallPath, _httpClient);
+            win.Owner = this;
+            win.ShowDialog();
+            EvaluateBepInExUI(); // 安装或卸载模组可能影响BepInEx目录
         }
     }
 }
