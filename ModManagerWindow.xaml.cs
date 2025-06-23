@@ -11,6 +11,7 @@ using System.Net.Http.Headers;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Diagnostics;
+using System.Linq;
 
 namespace AULGK
 {
@@ -62,10 +63,22 @@ namespace AULGK
         private void CheckInstallState(ModInfo mod)
         {
             if (string.IsNullOrEmpty(_pluginsDir)) return;
-            string dllPath = IOPath.Combine(_pluginsDir, mod.FileName);
-            bool isInstalled = File.Exists(dllPath) || File.Exists(dllPath + ".disabled");
+            // 寻找与模组名称前缀匹配的 dll
+            var dllFiles = Directory.GetFiles(_pluginsDir, "*.dll*");
+            string? matchedPath = dllFiles.FirstOrDefault(f => IOPath.GetFileNameWithoutExtension(f).StartsWith(mod.Name, StringComparison.OrdinalIgnoreCase));
+
+            if (matchedPath == null)
+            {
+                // 尝试匹配禁用文件
+                var disabled = Directory.GetFiles(_pluginsDir, "*.dll.disabled");
+                matchedPath = disabled.FirstOrDefault(f => IOPath.GetFileNameWithoutExtension(f).StartsWith(mod.Name, StringComparison.OrdinalIgnoreCase));
+            }
+
+            bool isInstalled = matchedPath != null;
+            bool isEnabled = matchedPath != null && !matchedPath.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase);
+
             mod.IsInstalled = isInstalled;
-            mod.IsEnabled = File.Exists(dllPath);
+            mod.IsEnabled = isEnabled;
 
             if (isInstalled)
             {
