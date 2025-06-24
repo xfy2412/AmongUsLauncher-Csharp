@@ -21,7 +21,7 @@ namespace AULGK
     {
         private readonly string? _gamePath;
         private readonly HttpClient _httpClient;
-        private readonly string _modsUrl = "https://gh-proxy.com/github.com/Yar1991-Translation/BeplnEx/blob/main/mods.json"; // 模组列表
+        private readonly string _modsUrl = "https://mxzc.cloud:35249/mod_list.json"; // 模组列表
         private string _pluginsDir = "";
         private readonly ObservableCollection<ModInfo> _mods = new();
         public ModInfo? SelectedMod { get; set; }
