@@ -905,6 +905,7 @@ namespace AULGK
                 return;
             }
 
+            // 清除所有选中状态
             foreach (ServerDisplayItem item in ServerListBox.Items)
             {
                 item.IsSelected = false;
@@ -912,17 +913,30 @@ namespace AULGK
             UpdateDeleteButtonVisibility();
             ServerListBox.Items.Refresh();
 
-            _serverDisplayItems.Add(new ServerDisplayItem
+            // 创建临时的集合副本，避免直接修改 ItemsSource
+            var tempItems = new ObservableCollection<ServerDisplayItem>(_serverDisplayItems);
+            tempItems.Add(new ServerDisplayItem
             {
                 DisplayText = "",
                 RegionIndex = -1,
                 IsSelected = false
             });
+            ServerListBox.ItemsSource = tempItems; // 临时绑定到副本
             _isDragging = true;
 
-            DragDrop.DoDragDrop(listBoxItem, draggedItem, DragDropEffects.Move);
-            _dragStartPoint = null;
-            WriteLog("开始拖拽服务器");
+            try
+            {
+                DragDrop.DoDragDrop(listBoxItem, draggedItem, DragDropEffects.Move);
+            }
+            finally
+            {
+                // 拖拽结束后恢复原始 ItemsSource
+                ServerListBox.ItemsSource = _serverDisplayItems;
+                _isDragging = false;
+                ResetDragVisualEffects(listBox);
+                _dragStartPoint = null;
+                WriteLog("拖拽操作完成");
+            }
         }
 
         // 拖拽进入
@@ -1042,6 +1056,7 @@ namespace AULGK
                 return;
             }
 
+            // 移动 _regions 中的项
             var draggedRegion = _regions[oldIndex];
             _regions.RemoveAt(oldIndex);
             if (newIndex > oldIndex)
@@ -1075,16 +1090,14 @@ namespace AULGK
                 }
             }
             _lastInsertIndex = -1;
+            _isDragging = false;
 
-            if (_isDragging)
+            // 确保 ItemsSource 是原始集合
+            if (ServerListBox.ItemsSource != _serverDisplayItems)
             {
-                var placeholder = ServerListBox.Items.Cast<ServerDisplayItem>().LastOrDefault(item => string.IsNullOrEmpty(item.DisplayText));
-                if (placeholder != null)
-                {
-                    ServerListBox.Items.Remove(placeholder);
-                }
-                _isDragging = false;
+                ServerListBox.ItemsSource = _serverDisplayItems;
             }
+
             WriteLog("重置拖拽视觉效果");
         }
 
