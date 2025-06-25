@@ -21,18 +21,20 @@ namespace AULGK
     {
         private readonly string? _gamePath;
         private readonly HttpClient _httpClient;
-        private readonly string _modsUrl = "https://gh-proxy.com/github.com/Yar1991-Translation/BeplnEx/blob/main/mods.json"; // 模组列表
+        private readonly string _modsUrl = "https://mxzc.cloud:35249/mod_list.json"; // 模组列表
         private string _pluginsDir = "";
         private readonly ObservableCollection<ModInfo> _mods = new();
         public ModInfo? SelectedMod { get; set; }
         private readonly string? _gitHubToken;
+        private readonly Action<string>? _logger;
 
-        public ModManagerWindow(string? gamePath, HttpClient client, string? gitHubToken)
+        public ModManagerWindow(string? gamePath, HttpClient client, string? gitHubToken, Action<string>? logger = null)
         {
             InitializeComponent();
             _gamePath = gamePath;
             _httpClient = client;
             _gitHubToken = gitHubToken;
+            _logger = logger;
             if (_gamePath != null)
             {
                 _pluginsDir = IOPath.Combine(_gamePath, "BepInEx", "plugins");
@@ -46,6 +48,7 @@ namespace AULGK
         {
             _mods.Clear();
             StatusText.Text = "正在获取模组列表...";
+            Log("开始获取模组列表");
             try
             {
                 var json = await _httpClient.GetStringAsync(_modsUrl);
@@ -62,10 +65,12 @@ namespace AULGK
                 }
 
                 StatusText.Text = $"已加载 {_mods.Count} 个模组";
+                Log($"已加载 {_mods.Count} 个模组");
             }
             catch (Exception ex)
             {
                 StatusText.Text = $"获取列表失败：{ex.Message}";
+                Log($"加载模组列表失败：{ex.Message}");
             }
         }
 
@@ -179,6 +184,7 @@ namespace AULGK
             try
             {
                 StatusText.Text = $"下载 {mod.Name}...";
+                Log($"开始安装 {mod.Name}");
 
                 string downloadUrl = mod.DownloadUrl;
                 string fileName = IOPath.GetFileName(new Uri(downloadUrl.Replace("https://ghproxy.com/", "")) // 去掉代理前缀再取文件名
@@ -224,10 +230,12 @@ namespace AULGK
                 // 更新安装状态（包括记录路径）
                 CheckInstallState(mod);
                 StatusText.Text = $"已安装 {mod.Name}";
+                Log($"已安装 {mod.Name}");
             }
             catch (Exception ex)
             {
                 StatusText.Text = $"安装失败：{ex.Message}";
+                Log($"安装 {mod.Name} 失败：{ex.Message}");
             }
         }
 
@@ -257,11 +265,13 @@ namespace AULGK
             catch (Exception ex)
             {
                 MessageBox.Show($"切换失败：{ex.Message}");
+                Log($"切换 {mod.Name} 失败：{ex.Message}");
             }
             finally
             {
                 CheckInstallState(mod);
                 UpdateButtonStates(mod);
+                Log($"切换 {mod.Name}，当前状态：{(mod.IsEnabled ? "启用" : "禁用")}");
             }
         }
 
@@ -283,10 +293,12 @@ namespace AULGK
                 if (File.Exists(dllPath)) File.Delete(dllPath);
                 if (File.Exists(disabledPath)) File.Delete(disabledPath);
                 StatusText.Text = $"{mod.Name} 已卸载。";
+                Log($"已卸载 {mod.Name}");
             }
             catch (Exception ex)
             {
                  StatusText.Text = $"卸载失败: {ex.Message}";
+                 Log($"卸载 {mod.Name} 失败：{ex.Message}");
             }
             finally
             {
@@ -357,6 +369,9 @@ namespace AULGK
                 }
             }
         }
+
+        // 统一日志入口
+        private void Log(string message) => _logger?.Invoke($"[ModManager] {message}");
 
         public class ModInfo : INotifyPropertyChanged
         {

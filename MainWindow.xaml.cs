@@ -83,7 +83,11 @@ namespace AULGK
         {
             InitializeComponent();
             _filePath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\regionInfo.json");
+#if DEBUG
+            _logPath = IOPath.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "AULGK.log");
+#else
             _logPath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\AULGK.log");
+#endif
             _settingsPath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\AULGK.settings.json");
             InitializeApplication();
         }
@@ -1372,30 +1376,40 @@ namespace AULGK
         // 根据状态更新安装 BepInEx 的按钮与复选框可见性
         private void EvaluateBepInExUI()
         {
+            // 若用户选择永久关闭提示
             if (_settings.SuppressBepInExPrompt)
             {
                 InstallBepInExButton.Visibility = Visibility.Collapsed;
                 UninstallBepInExButton.Visibility = Visibility.Collapsed;
-                SuppressBepInExCheckBox.Visibility = Visibility.Collapsed;
                 BepInExInfoText.Visibility = Visibility.Collapsed;
+                HideBepInExPromptButton.Visibility = Visibility.Collapsed;
+                ShowBepInExPromptButton.Visibility = Visibility.Visible;
                 return;
             }
 
+            // 未检测到游戏安装路径
             if (_gameInstallPath == null)
             {
                 InstallBepInExButton.Visibility = Visibility.Collapsed;
                 UninstallBepInExButton.Visibility = Visibility.Collapsed;
-                SuppressBepInExCheckBox.Visibility = Visibility.Collapsed;
                 BepInExInfoText.Visibility = Visibility.Collapsed;
+                HideBepInExPromptButton.Visibility = Visibility.Collapsed;
+                ShowBepInExPromptButton.Visibility = Visibility.Visible;
                 return;
             }
 
             bool installed = Directory.Exists(IOPath.Combine(_gameInstallPath, "BepInEx"));
             InstallBepInExButton.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
             UninstallBepInExButton.Visibility = installed ? Visibility.Visible : Visibility.Collapsed;
-            SuppressBepInExCheckBox.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
+
             BepInExInfoText.Visibility = (InstallBepInExButton.Visibility == Visibility.Visible || UninstallBepInExButton.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
-            SuppressBepInExCheckBox.IsChecked = _settings.SuppressBepInExPrompt;
+
+            InstallBepInExButton.IsEnabled = InstallBepInExButton.Visibility == Visibility.Visible;
+            UninstallBepInExButton.IsEnabled = UninstallBepInExButton.Visibility == Visibility.Visible;
+
+            // 根据信息区域显示/隐藏"关闭提示"按钮
+            HideBepInExPromptButton.Visibility = BepInExInfoText.Visibility;
+            ShowBepInExPromptButton.Visibility = Visibility.Collapsed;
         }
 
         // "安装 BepInEx"按钮点击
@@ -1443,10 +1457,18 @@ namespace AULGK
             EvaluateBepInExUI();
         }
 
-        // "不再提示"复选框点击
-        private void SuppressBepInExCheckBox_Click(object sender, RoutedEventArgs e)
+        // "关闭 BepInEx 提示" 按钮点击
+        private void HideBepInExPromptButton_Click(object sender, RoutedEventArgs e)
         {
-            _settings.SuppressBepInExPrompt = SuppressBepInExCheckBox.IsChecked ?? false;
+            _settings.SuppressBepInExPrompt = true;
+            SaveSettings();
+            EvaluateBepInExUI();
+        }
+
+        // 新增 "开启 BepInEx 提示" 按钮点击
+        private void ShowBepInExPromptButton_Click(object sender, RoutedEventArgs e)
+        {
+            _settings.SuppressBepInExPrompt = false;
             SaveSettings();
             EvaluateBepInExUI();
         }
@@ -1461,7 +1483,7 @@ namespace AULGK
         // 打开模组管理窗口
         private void OpenModManager_Click(object sender, RoutedEventArgs e)
         {
-            var win = new ModManagerWindow(_gameInstallPath, _httpClient, _settings.GitHubToken);
+            var win = new ModManagerWindow(_gameInstallPath, _httpClient, _settings.GitHubToken, WriteLog);
             win.Owner = this;
             win.ShowDialog();
             EvaluateBepInExUI(); // 安装或卸载模组可能影响BepInEx目录
