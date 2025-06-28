@@ -54,9 +54,21 @@
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <Border Padding="8" Margin="0,2" CornerRadius="3">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="14"/>
-                                    <TextBlock Text="{Binding InstallState}" FontSize="11" Style="{StaticResource StatusTextStyle}"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="14" VerticalAlignment="Center"/>
+                                    <TextBlock Text=" (有更新)" FontSize="11" Foreground="#E74C3C" FontWeight="Bold" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasUpdate}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding InstallState}" FontSize="11" Style="{StaticResource StatusTextStyle}" Margin="5,0,0,0"/>
                                 </StackPanel>
                                 <Border.Style>
                                     <Style TargetType="Border">
@@ -84,14 +96,12 @@
                     <TextBlock Text="{Binding Version, StringFormat='版本: {0}'}" FontSize="14" Foreground="#7F8C8D" Margin="0,2,0,15"/>
                     <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Margin="0,0,0,20"/>
                     <TextBlock Text="{Binding InstallState}" FontSize="14" Style="{StaticResource StatusTextStyle}" Margin="0,0,0,15"/>
-
                     <StackPanel Orientation="Horizontal">
                         <Button x:Name="InstallButton" Content="⬇️ 安装/更新" Click="Install_Click"/>
                         <Button x:Name="ToggleButton" Margin="10,0,0,0" Content="🔌 启用/禁用" Click="Toggle_Click"/>
                         <Button x:Name="UninstallButton" Margin="10,0,0,0" Style="{StaticResource UninstallButton}" Content="🗑️ 卸载" Click="Uninstall_Click"/>
                         <Button x:Name="OpenFolderButton" Margin="10,0,0,0" Content="📂 打开目录" Click="OpenFolder_Click"/>
                     </StackPanel>
-
                     <TextBlock x:Name="StatusText" Text="" Margin="0,15,0,0" FontWeight="SemiBold"/>
                 </StackPanel>
             </StackPanel>

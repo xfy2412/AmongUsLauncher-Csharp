@@ -89,6 +89,8 @@ namespace AULGK
             _logPath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\AULGK.log");
 #endif
             _settingsPath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\AULGK.settings.json");
+            File.WriteAllText(_logPath, string.Empty);
+            WriteLog("日志文件 AULGK.log 已清空");
             InitializeApplication();
 
         }
