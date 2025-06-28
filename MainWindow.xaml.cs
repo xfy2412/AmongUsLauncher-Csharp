@@ -74,7 +74,7 @@ namespace AULGK
         private bool _isDragging;
         private Point? _dragStartPoint;
         private int _lastInsertIndex = -1;
-        private readonly string _bepInExDownloadUrl = "https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.3/BepInEx_win_x64_5.4.23.3.zip"; // BepInEx x64 5.4.21 版本
+        private readonly string _bepInExDownloadUrl = "https://vip.123pan.cn/1813732458/jhosupdate/AUL_files/BepInEx.zip"; // BepInEx x64 5.4.21 版本
         private string? _gameInstallPath; // Among Us 安装目录
         private readonly string _settingsPath;
         private AppSettings _settings = new();
@@ -90,6 +90,7 @@ namespace AULGK
 #endif
             _settingsPath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\AULGK.settings.json");
             InitializeApplication();
+
         }
 
         // 初始化应用程序
@@ -1317,8 +1318,11 @@ namespace AULGK
                 return;
             }
 
+            ProgressWindow? progressWindow = null; // 声明移到 try 块外部
             try
             {
+                progressWindow = new ProgressWindow("正在安装 BepInEx...");
+                progressWindow.Show();
                 WriteLog("开始下载 BepInEx...");
                 string tempZip = IOPath.GetTempFileName();
                 await using (var remote = await _httpClient.GetStreamAsync(_bepInExDownloadUrl))
@@ -1331,10 +1335,12 @@ namespace AULGK
                 ZipFile.ExtractToDirectory(tempZip, _gameInstallPath, true);
                 File.Delete(tempZip);
                 WriteLog("BepInEx 安装完成");
+                progressWindow.Close();
                 MessageBox.Show("BepInEx 安装完成！", "完成", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
+                progressWindow?.Close(); // 使用 ?. 安全关闭
                 WriteLog($"安装 BepInEx 失败：{ex.Message}");
                 MessageBox.Show($"自动安装 BepInEx 失败：{ex.Message}\n请尝试手动安装。", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
             }
@@ -1483,10 +1489,10 @@ namespace AULGK
         // 打开模组管理窗口
         private void OpenModManager_Click(object sender, RoutedEventArgs e)
         {
-            var win = new ModManagerWindow(_gameInstallPath, _httpClient, _settings.GitHubToken, WriteLog);
+            var win = new ModManagerWindow(_gameInstallPath, _httpClient, WriteLog);
             win.Owner = this;
             win.ShowDialog();
-            EvaluateBepInExUI(); // 安装或卸载模组可能影响BepInEx目录
+            EvaluateBepInExUI();
         }
     }
 }
