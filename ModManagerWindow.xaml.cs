@@ -167,7 +167,7 @@ namespace AULGK
                 // 刷新 UI 显示
                 await Dispatcher.InvokeAsync(() =>
                 {
-                    StatusText.Text = $"已加载 {_mods.Count} 个模组";
+                    StatusText.Text = $"添加模组后首次启动可能会需要2~3分钟的时间，请耐心等待~";
                     ModListBox.Items.Refresh();
                 });
                 Log($"已加载 {_mods.Count} 个模组");
@@ -231,30 +231,6 @@ namespace AULGK
                 UninstallButton.IsEnabled = false;
                 OpenFolderButton.IsEnabled = Directory.Exists(_filesDir);
                 ToggleButton.Content = "🔌 启用";
-            }
-        }
-
-        // 窗口激活事件：刷新模组列表
-        private void Window_Activated(object sender, EventArgs e)
-        {
-            if (!_isLoadingMods)
-            {
-                Task.Run(async () =>
-                {
-                    await LoadModsAsync();
-                    await Dispatcher.InvokeAsync(() =>
-                    {
-                        foreach (var mod in _mods)
-                        {
-                            UpdateModStatus(mod);
-                        }
-                        ModListBox.Items.Refresh();
-                        if (DetailPanel.DataContext is ModInfo selectedMod)
-                        {
-                            UpdateButtonStates(selectedMod);
-                        }
-                    });
-                });
             }
         }
 
@@ -475,6 +451,8 @@ namespace AULGK
                     Directory.CreateDirectory(modDir);
 
                     // 解压模组文件
+                    string jsonPath = "";
+                    ModFilesInfo? modInfo = null;
                     using (var zip = ZipFile.OpenRead(tmp))
                     {
                         var zipEntries = zip.Entries.Select(e => e.FullName).ToList();
@@ -488,7 +466,7 @@ namespace AULGK
                         }
                         Log($"找到 JSON 文件：{jsonEntry.FullName}");
 
-                        string jsonPath = IOPath.Combine(_infoDir, $"{selectedMod.Name}.json");
+                        jsonPath = IOPath.Combine(_infoDir, $"{selectedMod.Name}.json");
                         using (var stream = jsonEntry.Open())
                         using (var file = File.Create(jsonPath))
                         {
@@ -499,7 +477,7 @@ namespace AULGK
                         // 验证 mod.json
                         string jsonContent = File.ReadAllText(jsonPath);
                         Log($"JSON 文件内容：{jsonContent}");
-                        var modInfo = JsonSerializer.Deserialize<ModFilesInfo>(jsonContent);
+                        modInfo = JsonSerializer.Deserialize<ModFilesInfo>(jsonContent);
                         if (modInfo?.Files == null)
                         {
                             throw new Exception("无效的 mod.json 文件，缺少 files 数组");
@@ -530,24 +508,89 @@ namespace AULGK
                                 throw;
                             }
                         }
-
-                        // 更新模组状态
-                        _modStatuses[selectedMod.Name] = new ModStatus
-                        {
-                            Info = jsonPath,
-                            Downloaded = 1,
-                            Installed = 0,
-                            Version = selectedMod.Version
-                        };
-                        SaveStatusFile();
                     }
 
-                    File.Delete(tmp);
-                    StatusText.Text = $"{selectedMod.Name} 下载完成";
-                    Log($"已下载 {selectedMod.Name}");
+                    // 检查是否已启用其他模组
+                    var otherEnabled = _modStatuses.Where(kvp => kvp.Key != selectedMod.Name && kvp.Value.Installed == 1).ToList();
+                    if (otherEnabled.Any())
+                    {
+                        Log($"检测到其他已启用模组：{string.Join(", ", otherEnabled.Select(kvp => kvp.Key))}");
+                        var result = ShowCustomMessageBox(
+                            "您的模组下载完毕，但是同时启用多个模组可能会发生意料之外的问题，开发者不会处理这些问题，是否继续？",
+                            "警告",
+                            MessageBoxButton.YesNoCancel,
+                            MessageBoxImage.Warning,
+                            MessageBoxResult.No,
+                            MessageBoxOptions.None,
+                            new[]
+                            {
+                        new CustomMessageBoxButton { Content = "是", Result = MessageBoxResult.Yes },
+                        new CustomMessageBoxButton { Content = "否", Result = MessageBoxResult.No },
+                        new CustomMessageBoxButton { Content = "禁用其他模组", Result = MessageBoxResult.Cancel }
+                            });
 
-                    // 自动启用模组
-                    await EnableModAsync(selectedMod);
+                        if (result == MessageBoxResult.No)
+                        {
+                            // 取消安装，清理已解压文件
+                            if (Directory.Exists(modDir))
+                            {
+                                Directory.Delete(modDir, true);
+                                Log($"取消安装，删除模组目录：{modDir}");
+                            }
+                            if (File.Exists(jsonPath))
+                            {
+                                File.Delete(jsonPath);
+                                Log($"取消安装，删除 JSON 文件：{jsonPath}");
+                            }
+                            StatusText.Text = $"{selectedMod.Name} 安装已取消";
+                            Log($"安装 {selectedMod.Name} 已取消");
+                            return;
+                        }
+                        else if (result == MessageBoxResult.Cancel)
+                        {
+                            // 禁用其他模组
+                            foreach (var kvp in otherEnabled)
+                            {
+                                var otherMod = _mods.FirstOrDefault(m => m.Name == kvp.Key);
+                                if (otherMod != null)
+                                {
+                                    await DisableModAsync(otherMod);
+                                    Log($"禁用其他模组：{otherMod.Name}");
+                                }
+                            }
+                        }
+                        // 继续安装（result == Yes 或禁用其他模组后）
+                        Log($"用户选择继续安装 {selectedMod.Name}，选项：{result}");
+                    }
+
+                    // 复制所有 mod.json 中的 Files 到游戏目录
+                    foreach (var file in modInfo!.Files)
+                    {
+                        string sourcePath = IOPath.Combine(modDir, file);
+                        if (!File.Exists(sourcePath))
+                        {
+                            Log($"安装跳过：{sourcePath} 不存在");
+                            continue;
+                        }
+                        string destPath = IOPath.Combine(_gamePath!, file);
+                        Directory.CreateDirectory(IOPath.GetDirectoryName(destPath)!);
+                        File.Copy(sourcePath, destPath, true);
+                        Log($"安装模组：复制 {sourcePath} 到 {destPath}");
+                    }
+
+                    // 更新模组状态
+                    _modStatuses[selectedMod.Name] = new ModStatus
+                    {
+                        Info = jsonPath,
+                        Downloaded = 1,
+                        Installed = 1, // 标记为已安装
+                        Version = selectedMod.Version
+                    };
+                    SaveStatusFile();
+
+                    File.Delete(tmp);
+                    StatusText.Text = $"{selectedMod.Name} 安装完成";
+                    Log($"已安装 {selectedMod.Name}，版本：{selectedMod.Version}");
                 }
                 finally
                 {
