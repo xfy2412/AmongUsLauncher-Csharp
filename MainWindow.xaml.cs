@@ -74,7 +74,7 @@ namespace AULGK
         private bool _isDragging;
         private Point? _dragStartPoint;
         private int _lastInsertIndex = -1;
-        private readonly string _bepInExDownloadUrl = "https://vip.123pan.cn/1813732458/31521399"; // BepInEx x86 5.4.21 版本
+        private readonly string _bepInExDownloadUrl = "https://vip.123pan.cn/1813732458/jhosupdate/AUL_files/BepInEx.zip"; // BepInEx x64 5.4.21 版本
         private string? _gameInstallPath; // Among Us 安装目录
         private readonly string _settingsPath;
         private AppSettings _settings = new();
@@ -83,9 +83,16 @@ namespace AULGK
         {
             InitializeComponent();
             _filePath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\regionInfo.json");
+#if DEBUG
+            _logPath = IOPath.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "AULGK.log");
+#else
             _logPath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\AULGK.log");
+#endif
             _settingsPath = System.IO.Path.Combine(_appDataPath, @"..\LocalLow\Innersloth\Among Us\AULGK.settings.json");
+            File.WriteAllText(_logPath, string.Empty);
+            WriteLog("日志文件 AULGK.log 已清空");
             InitializeApplication();
+
         }
 
         // 初始化应用程序
@@ -1313,8 +1320,11 @@ namespace AULGK
                 return;
             }
 
+            ProgressWindow? progressWindow = null; // 声明移到 try 块外部
             try
             {
+                progressWindow = new ProgressWindow("正在安装 BepInEx...");
+                progressWindow.Show();
                 WriteLog("开始下载 BepInEx...");
                 string tempZip = IOPath.GetTempFileName();
                 await using (var remote = await _httpClient.GetStreamAsync(_bepInExDownloadUrl))
@@ -1327,10 +1337,12 @@ namespace AULGK
                 ZipFile.ExtractToDirectory(tempZip, _gameInstallPath, true);
                 File.Delete(tempZip);
                 WriteLog("BepInEx 安装完成");
+                progressWindow.Close();
                 MessageBox.Show("BepInEx 安装完成！", "完成", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
+                progressWindow?.Close(); // 使用 ?. 安全关闭
                 WriteLog($"安装 BepInEx 失败：{ex.Message}");
                 MessageBox.Show($"自动安装 BepInEx 失败：{ex.Message}\n请尝试手动安装。", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
             }
@@ -1372,30 +1384,40 @@ namespace AULGK
         // 根据状态更新安装 BepInEx 的按钮与复选框可见性
         private void EvaluateBepInExUI()
         {
+            // 若用户选择永久关闭提示
             if (_settings.SuppressBepInExPrompt)
             {
                 InstallBepInExButton.Visibility = Visibility.Collapsed;
                 UninstallBepInExButton.Visibility = Visibility.Collapsed;
-                SuppressBepInExCheckBox.Visibility = Visibility.Collapsed;
                 BepInExInfoText.Visibility = Visibility.Collapsed;
+                HideBepInExPromptButton.Visibility = Visibility.Collapsed;
+                ShowBepInExPromptButton.Visibility = Visibility.Visible;
                 return;
             }
 
+            // 未检测到游戏安装路径
             if (_gameInstallPath == null)
             {
                 InstallBepInExButton.Visibility = Visibility.Collapsed;
                 UninstallBepInExButton.Visibility = Visibility.Collapsed;
-                SuppressBepInExCheckBox.Visibility = Visibility.Collapsed;
                 BepInExInfoText.Visibility = Visibility.Collapsed;
+                HideBepInExPromptButton.Visibility = Visibility.Collapsed;
+                ShowBepInExPromptButton.Visibility = Visibility.Visible;
                 return;
             }
 
             bool installed = Directory.Exists(IOPath.Combine(_gameInstallPath, "BepInEx"));
             InstallBepInExButton.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
             UninstallBepInExButton.Visibility = installed ? Visibility.Visible : Visibility.Collapsed;
-            SuppressBepInExCheckBox.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
+
             BepInExInfoText.Visibility = (InstallBepInExButton.Visibility == Visibility.Visible || UninstallBepInExButton.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
-            SuppressBepInExCheckBox.IsChecked = _settings.SuppressBepInExPrompt;
+
+            InstallBepInExButton.IsEnabled = InstallBepInExButton.Visibility == Visibility.Visible;
+            UninstallBepInExButton.IsEnabled = UninstallBepInExButton.Visibility == Visibility.Visible;
+
+            // 根据信息区域显示/隐藏"关闭提示"按钮
+            HideBepInExPromptButton.Visibility = BepInExInfoText.Visibility;
+            ShowBepInExPromptButton.Visibility = Visibility.Collapsed;
         }
 
         // "安装 BepInEx"按钮点击
@@ -1443,10 +1465,18 @@ namespace AULGK
             EvaluateBepInExUI();
         }
 
-        // "不再提示"复选框点击
-        private void SuppressBepInExCheckBox_Click(object sender, RoutedEventArgs e)
+        // "关闭 BepInEx 提示" 按钮点击
+        private void HideBepInExPromptButton_Click(object sender, RoutedEventArgs e)
         {
-            _settings.SuppressBepInExPrompt = SuppressBepInExCheckBox.IsChecked ?? false;
+            _settings.SuppressBepInExPrompt = true;
+            SaveSettings();
+            EvaluateBepInExUI();
+        }
+
+        // 新增 "开启 BepInEx 提示" 按钮点击
+        private void ShowBepInExPromptButton_Click(object sender, RoutedEventArgs e)
+        {
+            _settings.SuppressBepInExPrompt = false;
             SaveSettings();
             EvaluateBepInExUI();
         }
@@ -1461,10 +1491,10 @@ namespace AULGK
         // 打开模组管理窗口
         private void OpenModManager_Click(object sender, RoutedEventArgs e)
         {
-            var win = new ModManagerWindow(_gameInstallPath, _httpClient, _settings.GitHubToken);
+            var win = new ModManagerWindow(_gameInstallPath, _httpClient, WriteLog);
             win.Owner = this;
             win.ShowDialog();
-            EvaluateBepInExUI(); // 安装或卸载模组可能影响BepInEx目录
+            EvaluateBepInExUI();
         }
     }
 }

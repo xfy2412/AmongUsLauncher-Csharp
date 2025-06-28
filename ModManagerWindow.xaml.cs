@@ -1,144 +1,271 @@
-using System.Collections.ObjectModel;
+using AULGK;
+using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
-using System.Net.Http;
-using System.Text.Json.Serialization;
-using System.Text.Json;
-using System.Windows;
-using IOPath = System.IO.Path;
-using System.Threading.Tasks;
-using System.Net.Http.Headers;
-using System.ComponentModel;
-using System.Runtime.CompilerServices;
-using System.Diagnostics;
 using System.Linq;
-using System.Text.RegularExpressions;
+using System.Net.Http;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Media;
+using System.Windows.Threading;
+using IOPath = System.IO.Path;
 
 namespace AULGK
 {
     public partial class ModManagerWindow : Window
     {
-        private readonly string? _gamePath;
-        private readonly HttpClient _httpClient;
-        private readonly string _modsUrl = "https://mxzc.cloud:35249/mod_list.json"; // 模组列表
-        private string _pluginsDir = "";
-        private readonly ObservableCollection<ModInfo> _mods = new();
-        public ModInfo? SelectedMod { get; set; }
-        private readonly string? _gitHubToken;
+        // 字段：模组管理器核心配置
+        private readonly string? _gamePath; // 游戏安装目录，如 c:\program files (x86)\steam\steamapps\common\Among Us
+        private readonly HttpClient _httpClient; // 用于下载模组列表和文件
+        private readonly string _modsUrl = "https://mxzc.cloud:35249/mod_list.json"; // 模组列表 JSON 地址
+        private readonly string _modDir; // 本地模组根目录：mod/
+        private readonly string _infoDir; // 模组信息目录：mod/info/
+        private readonly string _filesDir; // 模组文件目录：mod/files/
+        private readonly string _statusFile; // 模组状态文件：mod/status.json
+        private readonly ObservableCollection<ModInfo> _mods = new(); // 模组列表，绑定到 UI
+        private readonly Dictionary<string, ModStatus> _modStatuses = new(); // 模组状态缓存
+        private readonly Action<string>? _logger; // 日志记录回调
+        private bool _isLoadingMods = false; // 防止重复加载模组
 
-        public ModManagerWindow(string? gamePath, HttpClient client, string? gitHubToken)
+        // 构造函数：初始化模组管理器
+        public ModManagerWindow(string? gamePath, HttpClient client, Action<string>? logger = null)
         {
             InitializeComponent();
             _gamePath = gamePath;
             _httpClient = client;
-            _gitHubToken = gitHubToken;
-            if (_gamePath != null)
-            {
-                _pluginsDir = IOPath.Combine(_gamePath, "BepInEx", "plugins");
-                Directory.CreateDirectory(_pluginsDir);
-            }
+            _logger = logger;
+
+            // 初始化目录结构
+            string baseDir = IOPath.Combine(AppDomain.CurrentDomain.BaseDirectory, "mod");
+            _modDir = baseDir;
+            _infoDir = IOPath.Combine(baseDir, "info");
+            _filesDir = IOPath.Combine(baseDir, "files");
+            _statusFile = IOPath.Combine(baseDir, "status.json");
+
+            Directory.CreateDirectory(_modDir);
+            Directory.CreateDirectory(_infoDir);
+            Directory.CreateDirectory(_filesDir);
+
+            // 绑定模组列表到 UI 并加载状态
             ModListBox.ItemsSource = _mods;
+            LoadStatusFile();
             _ = LoadModsAsync();
         }
 
-        private async Task LoadModsAsync()
+        // 日志记录：记录操作到日志文件
+        private void Log(string message) => _logger?.Invoke($"[ModManager] {message}");
+
+        // 加载状态文件：从 status.json 读取模组状态
+        private void LoadStatusFile()
         {
-            _mods.Clear();
-            StatusText.Text = "正在获取模组列表...";
             try
             {
-                var json = await _httpClient.GetStringAsync(_modsUrl);
-                var list = JsonSerializer.Deserialize<List<ModInfo>>(json) ?? new();
-
-                // 并行拉取 GitHub Release 信息，提高加载速度
-                await Task.WhenAll(list.Select(UpdateModFromGitHubAsync));
-
-                // 统一检查本地安装状态并刷新 UI
-                foreach (var m in list)
+                if (File.Exists(_statusFile))
                 {
-                    CheckInstallState(m);
-                    _mods.Add(m);
+                    string json = File.ReadAllText(_statusFile);
+                    var statuses = JsonSerializer.Deserialize<Dictionary<string, ModStatus>>(json);
+                    if (statuses != null)
+                    {
+                        _modStatuses.Clear();
+                        foreach (var kvp in statuses)
+                        {
+                            _modStatuses[kvp.Key] = kvp.Value;
+                        }
+                        Log($"加载 status.json，包含 {_modStatuses.Count} 个模组状态");
+                    }
                 }
-
-                StatusText.Text = $"已加载 {_mods.Count} 个模组";
             }
             catch (Exception ex)
             {
-                StatusText.Text = $"获取列表失败：{ex.Message}";
+                Log($"加载 status.json 失败：{ex.Message}");
             }
         }
 
-        private void CheckInstallState(ModInfo mod)
+        // 保存状态文件：将模组状态写入 status.json
+        private void SaveStatusFile()
         {
-            if (string.IsNullOrEmpty(_pluginsDir)) return;
-
-            // 根据 fileMatch 生成匹配委托，支持：
-            // 1. 通配符 * ?
-            // 2. 正则表达式
-            // 3. 普通子串包含
-
-            bool Match(string path)
+            try
             {
-                string fileName = IOPath.GetFileName(path);
-
-                string pattern = string.IsNullOrEmpty(mod.FileMatch) ? mod.Name : mod.FileMatch;
-
-                if (string.IsNullOrEmpty(pattern)) return false;
-
-                // 通配符
-                if (pattern.Contains('*') || pattern.Contains('?'))
-                {
-                    // 将通配符转换为正则
-                    string regexPattern = "^" + Regex.Escape(pattern)
-                                                    .Replace("\\*", ".*")
-                                                    .Replace("\\?", ".") + "$";
-                    return Regex.IsMatch(fileName, regexPattern, RegexOptions.IgnoreCase);
-                }
-
-                // 尝试作为正则表达式
-                try
-                {
-                    return Regex.IsMatch(fileName, pattern, RegexOptions.IgnoreCase);
-                }
-                catch
-                {
-                    // 非法正则则回退到包含判断
-                    return fileName.Contains(pattern, StringComparison.OrdinalIgnoreCase);
-                }
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                string json = JsonSerializer.Serialize(_modStatuses, options);
+                File.WriteAllText(_statusFile, json);
+                Log($"保存 status.json");
             }
-
-            string? matchedPath = Directory.EnumerateFiles(_pluginsDir, "*.dll*", SearchOption.AllDirectories)
-                                           .FirstOrDefault(Match);
-
-            if (matchedPath == null)
+            catch (Exception ex)
             {
-                matchedPath = Directory.EnumerateFiles(_pluginsDir, "*.dll.disabled", SearchOption.AllDirectories)
-                                           .FirstOrDefault(Match);
+                Log($"保存 status.json 失败：{ex.Message}");
             }
-
-            bool isInstalled = matchedPath != null;
-            bool isEnabled = matchedPath != null && !matchedPath.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase);
-
-            // 记录实际安装路径，方便后续操作
-            mod.InstalledFilePath = matchedPath ?? string.Empty;
-
-            mod.IsInstalled = isInstalled;
-            mod.IsEnabled = isEnabled;
-
-            mod.InstallState = isInstalled
-                ? (isEnabled ? "✅ 已启用" : "☑️ 已禁用")
-                : "➖ 未安装";
         }
 
-        private void ModListBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        // 加载模组列表：从远程 URL 获取模组并更新 UI
+        private async Task LoadModsAsync()
         {
-            var selectedMod = ModListBox.SelectedItem as ModInfo;
-            if (selectedMod != null)
+            if (_isLoadingMods) return; // 防止重复加载
+            _isLoadingMods = true;
+
+            try
+            {
+                // 清空现有模组列表
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    _mods.Clear();
+                    Log($"清空 _mods 集合，当前模组数：{_mods.Count}");
+                });
+
+                // 获取远程模组列表
+                var json = await _httpClient.GetStringAsync(_modsUrl);
+                Log($"从 {_modsUrl} 获取 mod_list.json：{json}");
+                var list = JsonSerializer.Deserialize<List<ModInfo>>(json) ?? new();
+                Log($"解析到 {list.Count} 个模组：{string.Join(", ", list.Select(m => m.Name))}");
+
+                // 去重模组（按 Name）
+                var uniqueMods = list.GroupBy(m => m.Name).Select(g => g.First()).ToList();
+                if (list.Count != uniqueMods.Count)
+                {
+                    Log($"发现重复模组，去重后剩余 {uniqueMods.Count} 个模组");
+                }
+
+                // 更新模组状态并添加到列表
+                foreach (var modInfo in uniqueMods)
+                {
+                    if (!_modStatuses.ContainsKey(modInfo.Name))
+                    {
+                        _modStatuses[modInfo.Name] = new ModStatus
+                        {
+                            Info = "",
+                            Downloaded = 0,
+                            Installed = 0,
+                            Version = modInfo.Version
+                        };
+                        SaveStatusFile();
+                    }
+                    else if (_modStatuses[modInfo.Name].Downloaded == 0 && _modStatuses[modInfo.Name].Version != modInfo.Version)
+                    {
+                        _modStatuses[modInfo.Name].Version = modInfo.Version;
+                        SaveStatusFile();
+                    }
+                    UpdateModStatus(modInfo);
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (!_mods.Any(m => m.Name == modInfo.Name))
+                        {
+                            _mods.Add(modInfo);
+                            Log($"添加模组：{modInfo.Name}，版本：{modInfo.Version}，有更新：{modInfo.HasUpdate}");
+                        }
+                    });
+                }
+
+                // 刷新 UI 显示
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    StatusText.Text = $"已加载 {_mods.Count} 个模组";
+                    ModListBox.Items.Refresh();
+                });
+                Log($"已加载 {_mods.Count} 个模组");
+            }
+            catch (Exception ex)
+            {
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    StatusText.Text = $"获取列表失败：{ex.Message}";
+                });
+                Log($"加载模组列表失败：{ex}");
+            }
+            finally
+            {
+                _isLoadingMods = false;
+            }
+        }
+
+        // 更新模组状态：设置下载、安装和更新状态
+        private void UpdateModStatus(ModInfo mod)
+        {
+            if (_modStatuses.TryGetValue(mod.Name, out var status))
+            {
+                mod.IsDownloaded = status.Downloaded == 1;
+                mod.IsInstalled = status.Installed == 1;
+                mod.InfoPath = status.Info;
+                mod.HasUpdate = status.Downloaded == 1 && status.Version != mod.Version;
+                mod.InstallState = status.Installed == 1 ? "模组已安装" :
+                              status.Downloaded == 1 ? "模组已下载，但未启用" : "模组未下载";
+                Log($"更新模组状态：{mod.Name}，Downloaded={status.Downloaded}，Installed={status.Installed}，Version={status.Version}，HasUpdate={mod.HasUpdate}");
+            }
+            else
+            {
+                mod.IsDownloaded = false;
+                mod.IsInstalled = false;
+                mod.HasUpdate = false;
+                mod.InfoPath = "";
+                mod.InstallState = "模组未下载";
+            }
+            mod.OnPropertyChanged(nameof(mod.InstallState));
+            mod.OnPropertyChanged(nameof(mod.HasUpdate));
+        }
+
+        // 更新 UI 按钮：根据模组状态设置按钮内容和可用性
+        private void UpdateButtonStates(ModInfo mod)
+        {
+            if (_modStatuses.TryGetValue(mod.Name, out var status))
+            {
+                InstallButton.Content = status.Downloaded == 1 && status.Version != mod.Version ? "⬇️ 更新" : "⬇️ 安装";
+                InstallButton.IsEnabled = !mod.IsDownloaded || mod.HasUpdate;
+                ToggleButton.IsEnabled = mod.IsDownloaded;
+                UninstallButton.IsEnabled = mod.IsDownloaded;
+                OpenFolderButton.IsEnabled = Directory.Exists(_filesDir);
+                ToggleButton.Content = mod.IsInstalled ? "🔌 禁用" : "🔌 启用";
+            }
+            else
+            {
+                InstallButton.Content = "⬇️ 安装";
+                InstallButton.IsEnabled = true;
+                ToggleButton.IsEnabled = false;
+                UninstallButton.IsEnabled = false;
+                OpenFolderButton.IsEnabled = Directory.Exists(_filesDir);
+                ToggleButton.Content = "🔌 启用";
+            }
+        }
+
+        // 窗口激活事件：刷新模组列表
+        private void Window_Activated(object sender, EventArgs e)
+        {
+            if (!_isLoadingMods)
+            {
+                Task.Run(async () =>
+                {
+                    await LoadModsAsync();
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        foreach (var mod in _mods)
+                        {
+                            UpdateModStatus(mod);
+                        }
+                        ModListBox.Items.Refresh();
+                        if (DetailPanel.DataContext is ModInfo selectedMod)
+                        {
+                            UpdateButtonStates(selectedMod);
+                        }
+                    });
+                });
+            }
+        }
+
+        // 模组选择事件：更新详情面板和按钮状态
+        private void ModListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (ModListBox.SelectedItem is ModInfo selectedMod)
             {
                 DetailHint.Visibility = Visibility.Collapsed;
                 DetailContent.Visibility = Visibility.Visible;
-                DetailPanel.DataContext = selectedMod; // Set DataContext for the whole panel
+                DetailPanel.DataContext = selectedMod;
                 UpdateButtonStates(selectedMod);
             }
             else
@@ -148,208 +275,60 @@ namespace AULGK
             }
         }
 
-        private void UpdateButtonStates(ModInfo mod)
-        {
-            InstallButton.IsEnabled = true;
-            ToggleButton.IsEnabled = mod.IsInstalled;
-            UninstallButton.IsEnabled = mod.IsInstalled;
-            OpenFolderButton.IsEnabled = Directory.Exists(_pluginsDir);
-            ToggleButton.Content = mod.IsEnabled ? "🔌 禁用" : "🔌 启用";
-        }
-
+        // 安装按钮点击：安装或更新模组
         private async void Install_Click(object sender, RoutedEventArgs e)
         {
-            if (DetailPanel.DataContext is not ModInfo mod) return;
-            if (string.IsNullOrEmpty(mod.DownloadUrl))
+            if (DetailPanel.DataContext is not ModInfo selectedMod) return;
+            if (string.IsNullOrEmpty(selectedMod.DownloadUrl))
             {
-                await UpdateModFromGitHubAsync(mod);
-                if (string.IsNullOrEmpty(mod.DownloadUrl))
-                {
-                    MessageBox.Show("未找到可下载的版本文件。", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-                    return;
-                }
+                MessageBox.Show("未找到可下载的版本文件。", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
             }
-            await InstallModAsync(mod);
-            CheckInstallState(mod);
-            UpdateButtonStates(mod);
+
+            if (_modStatuses.TryGetValue(selectedMod.Name, out var status) && status.Downloaded == 1 && status.Version != selectedMod.Version)
+            {
+                await UpdateModAsync(selectedMod);
+            }
+            else
+            {
+                await InstallModAsync(selectedMod);
+            }
+            UpdateModStatus(selectedMod);
+            await Dispatcher.InvokeAsync(() => ModListBox.Items.Refresh());
+            UpdateButtonStates(selectedMod);
         }
 
-        private async Task InstallModAsync(ModInfo mod)
+        // 启用/禁用按钮点击：切换模组状态
+        private async void Toggle_Click(object sender, RoutedEventArgs e)
         {
-            try
+            if (DetailPanel.DataContext is not ModInfo selectedMod) return;
+            if (selectedMod.IsInstalled)
             {
-                StatusText.Text = $"下载 {mod.Name}...";
-
-                string downloadUrl = mod.DownloadUrl;
-                string fileName = IOPath.GetFileName(new Uri(downloadUrl.Replace("https://ghproxy.com/", "")) // 去掉代理前缀再取文件名
-                                                         .LocalPath);
-
-                string tmp = IOPath.Combine(IOPath.GetTempPath(), fileName);
-
-                // 尝试下载，若 gh-proxy 失败则自动回退
-                async Task<Stream> OpenStreamAsync(string url)
-                {
-                    try
-                    {
-                        return await _httpClient.GetStreamAsync(url);
-                    }
-                    catch (HttpRequestException) when (url.StartsWith("https://ghproxy.com/", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // gh-proxy 失败，尝试原始 URL
-                        string fallback = url.Substring("https://ghproxy.com/".Length);
-                        StatusText.Text = "镜像下载失败，正在直接连接 GitHub...";
-                        return await _httpClient.GetStreamAsync(fallback);
-                    }
-                }
-
-                await using (var remote = await OpenStreamAsync(downloadUrl))
-                await using (var local = File.Create(tmp))
-                {
-                    await remote.CopyToAsync(local);
-                }
-
-                string ext = IOPath.GetExtension(fileName).ToLower();
-                if (ext == ".zip")
-                {
-                    ZipFile.ExtractToDirectory(tmp, _pluginsDir, true);
-                }
-                else if (ext == ".dll")
-                {
-                    var dest = IOPath.Combine(_pluginsDir, fileName);
-                    File.Copy(tmp, dest, true);
-                    mod.InstalledFilePath = dest;
-                }
-
-                File.Delete(tmp);
-                // 更新安装状态（包括记录路径）
-                CheckInstallState(mod);
-                StatusText.Text = $"已安装 {mod.Name}";
+                await DisableModAsync(selectedMod);
             }
-            catch (Exception ex)
+            else if (selectedMod.IsDownloaded)
             {
-                StatusText.Text = $"安装失败：{ex.Message}";
+                await EnableModAsync(selectedMod);
             }
+            UpdateModStatus(selectedMod);
+            await Dispatcher.InvokeAsync(() => ModListBox.Items.Refresh());
+            UpdateButtonStates(selectedMod);
         }
 
-        private void Toggle_Click(object sender, RoutedEventArgs e)
-        {
-            if (DetailPanel.DataContext is not ModInfo mod) return;
-            // 优先使用已记录的实际安装路径
-            string basePath = string.IsNullOrEmpty(mod.InstalledFilePath)
-                ? IOPath.Combine(_pluginsDir, mod.FileName)
-                : (mod.InstalledFilePath.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase)
-                    ? mod.InstalledFilePath[..^(".disabled".Length)]
-                    : mod.InstalledFilePath);
-
-            string dll = basePath;
-            string disabled = basePath + ".disabled";
-            try
-            {
-                if (mod.IsEnabled)
-                {
-                    File.Move(dll, disabled, true);
-                }
-                else if (File.Exists(disabled))
-                {
-                    File.Move(disabled, dll, true);
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"切换失败：{ex.Message}");
-            }
-            finally
-            {
-                CheckInstallState(mod);
-                UpdateButtonStates(mod);
-            }
-        }
-
-        private void Uninstall_Click(object sender, RoutedEventArgs e)
-        {
-            if (DetailPanel.DataContext is not ModInfo mod) return;
-
-            string basePath = string.IsNullOrEmpty(mod.InstalledFilePath)
-                ? IOPath.Combine(_pluginsDir, mod.FileName)
-                : (mod.InstalledFilePath.EndsWith(".disabled", StringComparison.OrdinalIgnoreCase)
-                    ? mod.InstalledFilePath[..^(".disabled".Length)]
-                    : mod.InstalledFilePath);
-
-            string dllPath = basePath;
-            string disabledPath = basePath + ".disabled";
-
-            try
-            {
-                if (File.Exists(dllPath)) File.Delete(dllPath);
-                if (File.Exists(disabledPath)) File.Delete(disabledPath);
-                StatusText.Text = $"{mod.Name} 已卸载。";
-            }
-            catch (Exception ex)
-            {
-                 StatusText.Text = $"卸载失败: {ex.Message}";
-            }
-            finally
-            {
-                CheckInstallState(mod);
-                ModListBox.Items.Refresh(); // To update the state in the list
-                UpdateButtonStates(mod);
-            }
-        }
-
+        // 刷新按钮点击：重新加载模组列表
         private async void Refresh_Click(object sender, RoutedEventArgs e)
         {
             await LoadModsAsync();
         }
 
-        private async Task UpdateModFromGitHubAsync(ModInfo mod)
-        {
-            if (string.IsNullOrEmpty(mod.Repo)) return;
-            try
-            {
-                var request = new HttpRequestMessage(HttpMethod.Get,
-                    $"https://api.github.com/repos/{mod.Repo}/releases/latest");
-                request.Headers.UserAgent.Add(new ProductInfoHeaderValue("AULGK", "1.0"));
-                if (!string.IsNullOrWhiteSpace(_gitHubToken))
-                    request.Headers.Authorization = new AuthenticationHeaderValue("token", _gitHubToken);
-                var resp = await _httpClient.SendAsync(request);
-                resp.EnsureSuccessStatusCode();
-                var json = await resp.Content.ReadAsStringAsync();
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-                mod.Version = root.GetProperty("tag_name").GetString() ?? mod.Version;
-
-                var assets = root.GetProperty("assets");
-                string? dllUrl = null, zipUrl = null;
-                foreach (var asset in assets.EnumerateArray())
-                {
-                    var name = asset.GetProperty("name").GetString();
-                    var url = asset.GetProperty("browser_download_url").GetString();
-                    if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(url)) continue;
-                    if (name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
-                    {
-                        dllUrl = "https://ghproxy.com/" + url;
-                        break; // 优先 DLL
-                    }
-                    if (zipUrl == null && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-                    {
-                        zipUrl = "https://ghproxy.com/" + url;
-                    }
-                }
-                mod.DownloadUrl = dllUrl ?? zipUrl ?? mod.DownloadUrl;
-            }
-            catch (Exception ex)
-            {
-                StatusText.Text = $"读取 {mod.Name} GitHub 信息失败：{ex.Message}";
-            }
-        }
-
+        // 打开文件夹按钮：打开模组文件目录
         private void OpenFolder_Click(object sender, RoutedEventArgs e)
         {
-            if (Directory.Exists(_pluginsDir))
+            if (Directory.Exists(_filesDir))
             {
                 try
                 {
-                    Process.Start(new ProcessStartInfo("explorer.exe", _pluginsDir) { UseShellExecute = true });
+                    Process.Start(new ProcessStartInfo("explorer.exe", _filesDir) { UseShellExecute = true });
                 }
                 catch (Exception ex)
                 {
@@ -358,6 +337,504 @@ namespace AULGK
             }
         }
 
+        // 卸载按钮点击：删除模组文件和状态
+        private async void Uninstall_Click(object sender, RoutedEventArgs e)
+        {
+            if (DetailPanel.DataContext is not ModInfo selectedMod) return;
+
+            // 确认卸载
+            if (MessageBox.Show($"即将删除 {selectedMod.Name} 模组的文件，是否继续？", "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            try
+            {
+                // 如果模组已启用，先禁用以清理 BepInEx/plugins/
+                if (selectedMod.IsInstalled)
+                {
+                    await DisableModAsync(selectedMod);
+                }
+
+                // 删除游戏目录中非 BepInEx/plugins/ 的文件和相关文件夹
+                string jsonPath = _modStatuses[selectedMod.Name].Info;
+                if (File.Exists(jsonPath))
+                {
+                    string jsonContent = File.ReadAllText(jsonPath);
+                    Log($"读取 JSON 文件内容：{jsonContent}");
+                    var modInfo = JsonSerializer.Deserialize<ModFilesInfo>(jsonContent);
+                    if (modInfo?.Files != null)
+                    {
+                        var directoriesToDelete = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var file in modInfo.Files.Where(f => !f.StartsWith("BepInEx/plugins/", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            string filePath = IOPath.Combine(_gamePath!, file);
+                            if (File.Exists(filePath))
+                            {
+                                File.Delete(filePath);
+                                Log($"删除游戏目录文件：{filePath}");
+                            }
+
+                            // 收集父目录
+                            string? parentDir = IOPath.GetDirectoryName(file);
+                            while (!string.IsNullOrEmpty(parentDir) && !parentDir.Equals(_gamePath, StringComparison.OrdinalIgnoreCase))
+                            {
+                                string fullParentDir = IOPath.Combine(_gamePath!, parentDir);
+                                if (!fullParentDir.StartsWith(IOPath.Combine(_gamePath!, "BepInEx/plugins"), StringComparison.OrdinalIgnoreCase))
+                                {
+                                    directoriesToDelete.Add(fullParentDir);
+                                }
+                                parentDir = IOPath.GetDirectoryName(parentDir);
+                            }
+                        }
+
+                        // 删除收集的目录（从最深层开始）
+                        foreach (var dir in directoriesToDelete.OrderByDescending(d => d.Length))
+                        {
+                            if (Directory.Exists(dir))
+                            {
+                                try
+                                {
+                                    Directory.Delete(dir, true);
+                                    Log($"删除游戏目录文件夹：{dir}");
+                                }
+                                catch (Exception ex)
+                                {
+                                    Log($"删除游戏目录文件夹 {dir} 失败：{ex.Message}");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 删除本地模组目录和信息文件
+                string modDir = IOPath.Combine(_filesDir, selectedMod.Name);
+                if (Directory.Exists(modDir))
+                {
+                    Directory.Delete(modDir, true);
+                    Log($"删除模组目录：{modDir}");
+                }
+                if (File.Exists(jsonPath))
+                {
+                    File.Delete(jsonPath);
+                    Log($"删除 JSON 文件：{jsonPath}");
+                }
+
+                // 更新状态并保存
+                _modStatuses[selectedMod.Name].Downloaded = 0;
+                _modStatuses[selectedMod.Name].Info = "";
+                _modStatuses[selectedMod.Name].Version = "";
+                SaveStatusFile();
+                StatusText.Text = $"{selectedMod.Name} 已卸载";
+                Log($"已卸载 {selectedMod.Name}");
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = $"卸载失败：{ex.Message}";
+                Log($"卸载 {selectedMod.Name} 失败：{ex}");
+            }
+            finally
+            {
+                UpdateModStatus(selectedMod);
+                await Dispatcher.InvokeAsync(() => ModListBox.Items.Refresh());
+                UpdateButtonStates(selectedMod);
+            }
+        }
+
+        // 安装模组：下载并解压模组文件
+        private async Task InstallModAsync(ModInfo selectedMod)
+        {
+            try
+            {
+                StatusText.Text = $"下载 {selectedMod.Name}...";
+                Log($"开始下载 {selectedMod.Name}");
+
+                string downloadUrl = selectedMod.DownloadUrl;
+                string fileName = IOPath.GetFileName(new Uri(downloadUrl).LocalPath);
+                string tmp = IOPath.Combine(IOPath.GetTempPath(), fileName);
+
+                var progressWindow = new ProgressWindow($"正在下载 {selectedMod.Name} 模组");
+                progressWindow.Show();
+
+                try
+                {
+                    // 下载模组包
+                    await using (var remote = await _httpClient.GetStreamAsync(downloadUrl))
+                    await using (var local = File.Create(tmp))
+                    {
+                        await remote.CopyToAsync(local);
+                    }
+                    Log($"下载完成，临时文件：{tmp}，大小：{new FileInfo(tmp).Length} 字节");
+
+                    // 清理并创建模组目录
+                    string modDir = IOPath.Combine(_filesDir, selectedMod.Name);
+                    if (Directory.Exists(modDir))
+                    {
+                        Directory.Delete(modDir, true);
+                    }
+                    Directory.CreateDirectory(modDir);
+
+                    // 解压模组文件
+                    using (var zip = ZipFile.OpenRead(tmp))
+                    {
+                        var zipEntries = zip.Entries.Select(e => e.FullName).ToList();
+                        Log($"ZIP 文件内容：{string.Join(", ", zipEntries)}");
+
+                        // 提取 mod.json
+                        var jsonEntry = zip.Entries.FirstOrDefault(e => e.FullName.Equals("mod.json", StringComparison.OrdinalIgnoreCase));
+                        if (jsonEntry == null)
+                        {
+                            throw new Exception("压缩包中未找到 mod.json 文件");
+                        }
+                        Log($"找到 JSON 文件：{jsonEntry.FullName}");
+
+                        string jsonPath = IOPath.Combine(_infoDir, $"{selectedMod.Name}.json");
+                        using (var stream = jsonEntry.Open())
+                        using (var file = File.Create(jsonPath))
+                        {
+                            await stream.CopyToAsync(file);
+                        }
+                        Log($"复制 JSON 文件到：{jsonPath}");
+
+                        // 验证 mod.json
+                        string jsonContent = File.ReadAllText(jsonPath);
+                        Log($"JSON 文件内容：{jsonContent}");
+                        var modInfo = JsonSerializer.Deserialize<ModFilesInfo>(jsonContent);
+                        if (modInfo?.Files == null)
+                        {
+                            throw new Exception("无效的 mod.json 文件，缺少 files 数组");
+                        }
+                        Log($"mod.json 中的文件列表：{string.Join(", ", modInfo.Files)}");
+
+                        // 解压所有文件（除 mod.json）
+                        foreach (var entry in zip.Entries.Where(e => !e.FullName.Equals(jsonEntry.FullName, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            string destPath = IOPath.Combine(modDir, entry.FullName);
+                            if (entry.FullName.EndsWith("/") || entry.FullName.EndsWith("\\"))
+                            {
+                                Directory.CreateDirectory(destPath);
+                                Log($"创建目录：{destPath}");
+                                continue;
+                            }
+
+                            string parentDir = IOPath.GetDirectoryName(destPath)!;
+                            Directory.CreateDirectory(parentDir);
+                            Log($"解压文件：{entry.FullName} 到 {destPath}");
+                            try
+                            {
+                                entry.ExtractToFile(destPath, true);
+                            }
+                            catch (Exception ex)
+                            {
+                                Log($"解压文件 {entry.FullName} 失败：{ex.Message}");
+                                throw;
+                            }
+                        }
+
+                        // 更新模组状态
+                        _modStatuses[selectedMod.Name] = new ModStatus
+                        {
+                            Info = jsonPath,
+                            Downloaded = 1,
+                            Installed = 0,
+                            Version = selectedMod.Version
+                        };
+                        SaveStatusFile();
+                    }
+
+                    File.Delete(tmp);
+                    StatusText.Text = $"{selectedMod.Name} 下载完成";
+                    Log($"已下载 {selectedMod.Name}");
+
+                    // 自动启用模组
+                    await EnableModAsync(selectedMod);
+                }
+                finally
+                {
+                    progressWindow.Close();
+                }
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = $"安装失败：{ex.Message}";
+                Log($"安装 {selectedMod.Name} 失败：{ex}");
+            }
+        }
+
+        // 更新模组：下载新版本并替换指定文件
+        private async Task UpdateModAsync(ModInfo selectedMod)
+        {
+            try
+            {
+                StatusText.Text = $"更新 {selectedMod.Name}...";
+                Log($"开始更新 {selectedMod.Name}");
+
+                // 清理旧模组文件
+                string modDir = IOPath.Combine(_filesDir, selectedMod.Name);
+                string jsonPath = IOPath.Combine(_infoDir, $"{selectedMod.Name}.json");
+                if (Directory.Exists(modDir))
+                {
+                    Directory.Delete(modDir, true);
+                    Log($"删除目录：{modDir}");
+                }
+                if (File.Exists(jsonPath))
+                {
+                    File.Delete(jsonPath);
+                    Log($"删除 JSON 文件：{jsonPath}");
+                }
+
+                string downloadUrl = selectedMod.DownloadUrl;
+                string fileName = IOPath.GetFileName(new Uri(downloadUrl).LocalPath);
+                string tmp = IOPath.Combine(IOPath.GetTempPath(), fileName);
+
+                var progressWindow = new ProgressWindow($"正在更新 {selectedMod.Name} 模组");
+                progressWindow.Show();
+
+                try
+                {
+                    // 下载模组包
+                    await using (var remote = await _httpClient.GetStreamAsync(downloadUrl))
+                    await using (var local = File.Create(tmp))
+                    {
+                        await remote.CopyToAsync(local);
+                    }
+                    Log($"下载完成，临时文件：{tmp}，大小：{new FileInfo(tmp).Length} 字节");
+
+                    // 解压 update 字段文件
+                    Directory.CreateDirectory(modDir);
+                    using (var zip = ZipFile.OpenRead(tmp))
+                    {
+                        var zipEntries = zip.Entries.Select(e => e.FullName).ToList();
+                        Log($"ZIP 文件内容：{string.Join(", ", zipEntries)}");
+
+                        // 提取 mod.json
+                        var jsonEntry = zip.Entries.FirstOrDefault(e => e.FullName.Equals("mod.json", StringComparison.OrdinalIgnoreCase));
+                        if (jsonEntry == null)
+                        {
+                            throw new Exception("压缩包中未找到 mod.json 文件");
+                        }
+                        Log($"找到 JSON 文件：{jsonEntry.FullName}");
+
+                        using (var stream = jsonEntry.Open())
+                        using (var file = File.Create(jsonPath))
+                        {
+                            await stream.CopyToAsync(file);
+                        }
+                        Log($"复制 JSON 文件到：{jsonPath}");
+
+                        // 读取 mod.json 的 update 字段
+                        string jsonContent = File.ReadAllText(jsonPath);
+                        Log($"JSON 文件内容：{jsonContent}");
+                        var modInfo = JsonSerializer.Deserialize<ModFilesInfo>(jsonContent);
+                        if (modInfo?.Files == null)
+                        {
+                            throw new Exception("无效的 mod.json 文件，缺少 files 数组");
+                        }
+                        Log($"mod.json 中的文件列表：{string.Join(", ", modInfo.Files)}");
+
+                        var filesToUpdate = modInfo.Update ?? modInfo.Files;
+                        Log($"更新文件列表：{string.Join(", ", filesToUpdate)}");
+
+                        // 解压 update 字段中的文件
+                        foreach (var file in filesToUpdate)
+                        {
+                            var entry = zip.Entries.FirstOrDefault(e => e.FullName.Equals(file, StringComparison.OrdinalIgnoreCase));
+                            if (entry == null)
+                            {
+                                Log($"更新文件中缺少：{file}");
+                                continue;
+                            }
+                            string destPath = IOPath.Combine(modDir, entry.FullName);
+                            string parentDir = IOPath.GetDirectoryName(destPath)!;
+                            Directory.CreateDirectory(parentDir);
+                            Log($"解压更新文件：{entry.FullName} 到 {destPath}");
+                            entry.ExtractToFile(destPath, true);
+                        }
+
+                        // 如果模组已启用，更新游戏目录文件
+                        if (_modStatuses[selectedMod.Name].Installed == 1)
+                        {
+                            foreach (var file in filesToUpdate)
+                            {
+                                string sourcePath = IOPath.Combine(modDir, file);
+                                if (!File.Exists(sourcePath))
+                                {
+                                    Log($"游戏目录更新跳过：{sourcePath} 不存在");
+                                    continue;
+                                }
+                                string destPath = IOPath.Combine(_gamePath!, file);
+                                Directory.CreateDirectory(IOPath.GetDirectoryName(destPath)!);
+                                File.Copy(sourcePath, destPath, true);
+                                Log($"更新游戏目录：复制 {sourcePath} 到 {destPath}");
+                            }
+                        }
+
+                        // 更新模组状态
+                        _modStatuses[selectedMod.Name].Info = jsonPath;
+                        _modStatuses[selectedMod.Name].Downloaded = 1;
+                        _modStatuses[selectedMod.Name].Version = selectedMod.Version;
+                        SaveStatusFile();
+                    }
+
+                    File.Delete(tmp);
+                    StatusText.Text = $"{selectedMod.Name} 更新完成";
+                    Log($"已更新 {selectedMod.Name} 到版本 {selectedMod.Version}");
+                }
+                finally
+                {
+                    progressWindow.Close();
+                }
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = $"更新失败：{ex.Message}";
+                Log($"更新 {selectedMod.Name} 失败：{ex}");
+            }
+        }
+
+        // 启用模组：将 BepInEx/plugins/ 文件复制到游戏目录
+        private async Task EnableModAsync(ModInfo mod)
+        {
+            // 检查是否允许多模组共存
+            var otherEnabled = _modStatuses.Where(kvp => kvp.Key != mod.Name && kvp.Value.Installed == 1).ToList();
+            if (otherEnabled.Any())
+            {
+                var result = ShowCustomMessageBox(
+                    "您的模组下载完毕，但是同时启用多个模组可能会发生意料之外的问题，开发者不会处理这些问题，是否继续？",
+                    "警告",
+                    MessageBoxButton.YesNoCancel,
+                    MessageBoxImage.Warning,
+                    MessageBoxResult.No,
+                    MessageBoxOptions.None,
+                    new[]
+                    {
+                        new CustomMessageBoxButton { Content = "是", Result = MessageBoxResult.Yes },
+                        new CustomMessageBoxButton { Content = "否", Result = MessageBoxResult.No },
+                        new CustomMessageBoxButton { Content = "禁用其他模组", Result = MessageBoxResult.Cancel }
+                    });
+
+                if (result == MessageBoxResult.No)
+                {
+                    return;
+                }
+                else if (result == MessageBoxResult.Cancel)
+                {
+                    foreach (var kvp in otherEnabled)
+                    {
+                        var otherMod = _mods.FirstOrDefault(m => m.Name == kvp.Key);
+                        if (otherMod != null)
+                        {
+                            await DisableModAsync(otherMod);
+                        }
+                    }
+                }
+            }
+
+            var progressWindow = new ProgressWindow($"正在启用 {mod.Name} 模组");
+            progressWindow.Show();
+
+            try
+            {
+                // 读取模组信息
+                string jsonPath = _modStatuses[mod.Name].Info;
+                if (!File.Exists(jsonPath))
+                {
+                    throw new Exception("模组信息文件不存在");
+                }
+
+                string json = File.ReadAllText(jsonPath);
+                Log($"读取 JSON 文件内容：{json}");
+                var modInfo = JsonSerializer.Deserialize<ModFilesInfo>(json);
+                if (modInfo?.Files == null)
+                {
+                    throw new Exception("无效的模组信息文件");
+                }
+
+                // 复制 BepInEx/plugins/ 文件到游戏目录
+                string sourceDir = IOPath.Combine(_filesDir, mod.Name);
+                foreach (var file in modInfo.Files.Where(f => f.StartsWith("BepInEx/plugins/", StringComparison.OrdinalIgnoreCase)))
+                {
+                    string sourcePath = IOPath.Combine(sourceDir, file);
+                    string destPath = IOPath.Combine(_gamePath!, file);
+                    Directory.CreateDirectory(IOPath.GetDirectoryName(destPath)!);
+                    File.Copy(sourcePath, destPath, true);
+                    Log($"启用模组：复制 {sourcePath} 到 {destPath}");
+                }
+
+                // 更新状态
+                _modStatuses[mod.Name].Installed = 1;
+                SaveStatusFile();
+                StatusText.Text = $"{mod.Name} 已启用";
+                Log($"已启用 {mod.Name}");
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = $"启用失败：{ex.Message}";
+                Log($"启用 {mod.Name} 失败：{ex}");
+            }
+            finally
+            {
+                progressWindow.Close();
+                UpdateModStatus(mod);
+                await Dispatcher.InvokeAsync(() => ModListBox.Items.Refresh());
+                UpdateButtonStates(mod);
+            }
+        }
+
+        // 禁用模组：删除游戏目录中的 BepInEx/plugins/ 文件
+        private async Task DisableModAsync(ModInfo mod)
+        {
+            var progressWindow = new ProgressWindow($"正在禁用 {mod.Name} 模组");
+            progressWindow.Show();
+
+            try
+            {
+                // 读取模组信息
+                string jsonPath = _modStatuses[mod.Name].Info;
+                if (!File.Exists(jsonPath))
+                {
+                    throw new Exception("模组信息文件不存在");
+                }
+
+                string json = File.ReadAllText(jsonPath);
+                var modInfo = JsonSerializer.Deserialize<ModFilesInfo>(json);
+                if (modInfo?.Files == null)
+                {
+                    throw new Exception("无效的模组信息文件");
+                }
+
+                // 删除 BepInEx/plugins/ 文件
+                foreach (var file in modInfo.Files.Where(f => f.StartsWith("BepInEx/plugins/", StringComparison.OrdinalIgnoreCase)))
+                {
+                    string filePath = IOPath.Combine(_gamePath!, file);
+                    if (File.Exists(filePath))
+                    {
+                        File.Delete(filePath);
+                        Log($"禁用模组：删除 {filePath}");
+                    }
+                }
+
+                // 更新状态
+                _modStatuses[mod.Name].Installed = 0;
+                SaveStatusFile();
+                StatusText.Text = $"{mod.Name} 已禁用";
+                Log($"已禁用 {mod.Name}");
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = $"禁用失败：{ex.Message}";
+                Log($"禁用 {mod.Name} 失败：{ex}");
+            }
+            finally
+            {
+                progressWindow.Close();
+                UpdateModStatus(mod);
+                await Dispatcher.InvokeAsync(() => ModListBox.Items.Refresh());
+                UpdateButtonStates(mod);
+            }
+        }
+
+        // 辅助类：模组信息
         public class ModInfo : INotifyPropertyChanged
         {
             private string _name = "";
@@ -365,28 +842,103 @@ namespace AULGK
             private string _description = "";
             private string _downloadUrl = "";
             private string _installState = "";
+            private bool _isDownloaded;
+            private bool _isInstalled;
+            private string _infoPath = "";
+            private bool _hasUpdate;
 
-            [JsonPropertyName("name")] public string Name { get => _name; set { _name = value; OnPropertyChanged(); OnPropertyChanged(nameof(FileName)); } }
+            [JsonPropertyName("name")] public string Name { get => _name; set { _name = value; OnPropertyChanged(); } }
             [JsonPropertyName("version")] public string Version { get => _version; set { _version = value; OnPropertyChanged(); } }
             [JsonPropertyName("description")] public string Description { get => _description; set { _description = value; OnPropertyChanged(); } }
-            [JsonPropertyName("downloadUrl")] public string DownloadUrl { get => _downloadUrl; set { _downloadUrl = value; OnPropertyChanged(); } } // 可为空，将由 GitHub API 填充
-            [JsonPropertyName("repo")] public string Repo { get; set; } = ""; // owner/repo 格式
-            [JsonPropertyName("fileMatch")] public string FileMatch { get; set; } = ""; // dll 文件名匹配关键字，可选
-            private bool _isInstalled;
-            public bool IsInstalled { get => _isInstalled; set { _isInstalled = value; OnPropertyChanged(); } }
-            private bool _isEnabled;
-            public bool IsEnabled { get => _isEnabled; set { _isEnabled = value; OnPropertyChanged(); } }
-            public string InstallState { get => _installState; set { _installState = value; OnPropertyChanged(); } }
-            public string FileName => Name + ".dll";
-
-            // 实际安装路径，用于简写文件名或多版本场景
-            [JsonIgnore]
-            private string _installedFilePath = "";
-            [JsonIgnore]
-            public string InstalledFilePath { get => _installedFilePath; set { _installedFilePath = value; OnPropertyChanged(); } }
+            [JsonPropertyName("path")] public string DownloadUrl { get => _downloadUrl; set { _downloadUrl = value; OnPropertyChanged(); } }
+            [JsonIgnore] public bool IsDownloaded { get => _isDownloaded; set { _isDownloaded = value; OnPropertyChanged(); } }
+            [JsonIgnore] public bool IsInstalled { get => _isInstalled; set { _isInstalled = value; OnPropertyChanged(); } }
+            [JsonIgnore] public string InstallState { get => _installState; set { _installState = value; OnPropertyChanged(); } }
+            [JsonIgnore] public string InfoPath { get => _infoPath; set { _infoPath = value; OnPropertyChanged(); } }
+            [JsonIgnore] public bool HasUpdate { get => _hasUpdate; set { _hasUpdate = value; OnPropertyChanged(); } }
 
             public event PropertyChangedEventHandler? PropertyChanged;
-            private void OnPropertyChanged([CallerMemberName] string? prop = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(prop));
+            public void OnPropertyChanged([CallerMemberName] string? prop = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(prop));
+        }
+
+        // 辅助类：模组状态
+        public class ModStatus
+        {
+            public string Info { get; set; } = "";
+            public int Downloaded { get; set; }
+            public int Installed { get; set; }
+            public string Version { get; set; } = "";
+        }
+
+        // 辅助类：模组文件信息
+        public class ModFilesInfo
+        {
+            [JsonPropertyName("files")]
+            public string[]? Files { get; set; }
+
+            [JsonPropertyName("update")]
+            public string[]? Update { get; set; }
+        }
+
+        // 辅助类：自定义消息框按钮
+        public class CustomMessageBoxButton
+        {
+            public string Content { get; set; } = "";
+            public MessageBoxResult Result { get; set; }
+        }
+
+        // 显示自定义消息框
+        private static MessageBoxResult ShowCustomMessageBox(string message, string caption, MessageBoxButton button, MessageBoxImage icon, MessageBoxResult defaultResult, MessageBoxOptions options, CustomMessageBoxButton[] customButtons)
+        {
+            var window = new Window
+            {
+                Title = caption,
+                Width = 400,
+                Height = 200,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ResizeMode = ResizeMode.NoResize,
+                Background = new SolidColorBrush(Color.FromRgb(44, 62, 80))
+            };
+
+            var grid = new Grid { Margin = new Thickness(15) };
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var textBlock = new TextBlock
+            {
+                Text = message,
+                Foreground = Brushes.White,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetRow(textBlock, 0);
+
+            var buttonPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 10, 0, 0)
+            };
+            Grid.SetRow(buttonPanel, 1);
+
+            foreach (var btn in customButtons)
+            {
+                var customButton = new Button
+                {
+                    Content = btn.Content,
+                    Margin = new Thickness(5, 0, 5, 0),
+                    Padding = new Thickness(10, 5, 10, 5),
+                    MinWidth = 80
+                };
+                customButton.Click += (s, e) => { window.DialogResult = btn.Result == MessageBoxResult.Yes; window.Close(); };
+                buttonPanel.Children.Add(customButton);
+            }
+
+            grid.Children.Add(textBlock);
+            grid.Children.Add(buttonPanel);
+            window.Content = grid;
+
+            return window.ShowDialog() == true ? MessageBoxResult.Yes : defaultResult;
         }
     }
-} 
+}
