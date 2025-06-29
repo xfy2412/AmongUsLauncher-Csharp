@@ -74,7 +74,7 @@ namespace AULGK
         private bool _isDragging;
         private Point? _dragStartPoint;
         private int _lastInsertIndex = -1;
-        private readonly string _bepInExDownloadUrl = "https://vip.123pan.cn/1813732458/jhosupdate/AUL_files/BepInEx.zip"; // BepInEx x64 5.4.21 版本
+        private readonly string _bepInExDownloadUrl = "https://vip.123pan.cn/1813732458/AUL_files/BepInEx.zip"; // BepInEx x64 5.4.21 版本
         private string? _gameInstallPath; // Among Us 安装目录
         private readonly string _settingsPath;
         private AppSettings _settings = new();
