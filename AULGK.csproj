@@ -15,6 +15,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="MaterialDesignThemes" Version="5.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Resource Include="Resources\AULGK.ico">
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </Resource>

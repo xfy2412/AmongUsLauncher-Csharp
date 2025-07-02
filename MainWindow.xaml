@@ -6,7 +6,8 @@
         xmlns:local="clr-namespace:AULGK"
         mc:Ignorable="d"
         Title="Among Us 启动器" Height="600" Width="900"
-        Icon="/Resources/amongus_icon.png">
+        Icon="/Resources/amongus_icon.png"
+        Style="{DynamicResource MaterialDesignWindow}">
     <Window.Resources>
         <!-- 缓动函数 -->
         <PowerEase x:Key="EaseFunction" EasingMode="EaseInOut" Power="2"/>
