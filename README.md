@@ -1,4 +1,4 @@
-！！！注意：AUL项目已用其他语言重置，仓库链接！！！
+！！！注意：AUL项目已用其他语言重置，仓库链接[AUL](htt[s://github.com/xfy2412/AmongUsLauncher)！！！
 
 # Among Us Launcher AmongUs启动器
 
