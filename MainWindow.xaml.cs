@@ -56,7 +56,8 @@ namespace AULGK
     {
         // 私有字段
         private readonly HttpClient _httpClient = new();
-        private readonly string _presetServersUrl = "https://mxzc.cloud:35249/preset_servers.json";
+        private readonly string _presetServersUrl = "https://mxzc.cloud/preset_servers.json";
+        private readonly DownLoadAPI _downloadApi = new();
         private readonly string _appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         private readonly string _filePath;
         private readonly string _logPath;
@@ -74,7 +75,6 @@ namespace AULGK
         private bool _isDragging;
         private Point? _dragStartPoint;
         private int _lastInsertIndex = -1;
-        private readonly string _bepInExDownloadUrl = "https://vip.123pan.cn/1813732458/AUL_files/BepInEx.zip"; // BepInEx x64 5.4.21 版本
         private string? _gameInstallPath; // Among Us 安装目录
         private readonly string _settingsPath;
         private AppSettings _settings = new();
@@ -1327,6 +1327,8 @@ namespace AULGK
                 progressWindow.Show();
                 WriteLog("开始下载 BepInEx...");
                 string tempZip = IOPath.GetTempFileName();
+                var _bepInExDownloadUrl=await _downloadApi.GetDownloadUrlNoName("bepinex","733");
+                WriteLog($"解析到的下载链接：{_bepInExDownloadUrl}");
                 await using (var remote = await _httpClient.GetStreamAsync(_bepInExDownloadUrl))
                 await using (var local = File.Create(tempZip))
                 {

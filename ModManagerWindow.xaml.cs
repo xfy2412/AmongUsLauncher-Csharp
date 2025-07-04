@@ -26,7 +26,8 @@ namespace AULGK
         // 字段：模组管理器核心配置
         private readonly string? _gamePath; // 游戏安装目录，如 c:\program files (x86)\steam\steamapps\common\Among Us
         private readonly HttpClient _httpClient; // 用于下载模组列表和文件
-        private readonly string _modsUrl = "https://mxzc.cloud:35249/mod_list.json"; // 模组列表 JSON 地址
+        private readonly string _modsUrl = "https://mxzc.cloud/mod_list.json"; // 模组列表 JSON 地址
+        private readonly DownLoadAPI _downloadApi = new();
         private readonly string _modDir; // 本地模组根目录：mod/
         private readonly string _infoDir; // 模组信息目录：mod/info/
         private readonly string _filesDir; // 模组文件目录：mod/files/
@@ -255,11 +256,6 @@ namespace AULGK
         private async void Install_Click(object sender, RoutedEventArgs e)
         {
             if (DetailPanel.DataContext is not ModInfo selectedMod) return;
-            if (string.IsNullOrEmpty(selectedMod.DownloadUrl))
-            {
-                MessageBox.Show("未找到可下载的版本文件。", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
-            }
 
             if (_modStatuses.TryGetValue(selectedMod.Name, out var status) && status.Downloaded == 1 && status.Version != selectedMod.Version)
             {
@@ -425,7 +421,9 @@ namespace AULGK
                 StatusText.Text = $"下载 {selectedMod.Name}...";
                 Log($"开始下载 {selectedMod.Name}");
 
-                string downloadUrl = selectedMod.DownloadUrl;
+                string downloadUrl = await _downloadApi.GetDownloadUrl("mod", selectedMod.Name, selectedMod.Version);
+                selectedMod.GeneratedUrl = downloadUrl;
+                Log($"解析到的下载链接：{downloadUrl}");
                 string fileName = IOPath.GetFileName(new Uri(downloadUrl).LocalPath);
                 string tmp = IOPath.Combine(IOPath.GetTempPath(), fileName);
 
@@ -626,7 +624,9 @@ namespace AULGK
                     Log($"删除 JSON 文件：{jsonPath}");
                 }
 
-                string downloadUrl = selectedMod.DownloadUrl;
+                string downloadUrl = await _downloadApi.GetDownloadUrl("mod", selectedMod.Name, selectedMod.Version);
+                selectedMod.GeneratedUrl = downloadUrl;
+                Log($"解析到的下载链接：" + downloadUrl);
                 string fileName = IOPath.GetFileName(new Uri(downloadUrl).LocalPath);
                 string tmp = IOPath.Combine(IOPath.GetTempPath(), fileName);
 
@@ -893,7 +893,7 @@ namespace AULGK
             [JsonPropertyName("name")] public string Name { get => _name; set { _name = value; OnPropertyChanged(); } }
             [JsonPropertyName("version")] public string Version { get => _version; set { _version = value; OnPropertyChanged(); } }
             [JsonPropertyName("description")] public string Description { get => _description; set { _description = value; OnPropertyChanged(); } }
-            [JsonPropertyName("path")] public string DownloadUrl { get => _downloadUrl; set { _downloadUrl = value; OnPropertyChanged(); } }
+            [JsonIgnore] public string GeneratedUrl { get; set; } = "";
             [JsonIgnore] public bool IsDownloaded { get => _isDownloaded; set { _isDownloaded = value; OnPropertyChanged(); } }
             [JsonIgnore] public bool IsInstalled { get => _isInstalled; set { _isInstalled = value; OnPropertyChanged(); } }
             [JsonIgnore] public string InstallState { get => _installState; set { _installState = value; OnPropertyChanged(); } }

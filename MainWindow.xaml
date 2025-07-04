@@ -6,7 +6,8 @@
         xmlns:local="clr-namespace:AULGK"
         mc:Ignorable="d"
         Title="Among Us 启动器" Height="600" Width="900"
-        Icon="/Resources/amongus_icon.png">
+        Icon="/Resources/amongus_icon.png"
+        Background="#2C3E50">
     <Window.Resources>
         <!-- 缓动函数 -->
         <PowerEase x:Key="EaseFunction" EasingMode="EaseInOut" Power="2"/>
@@ -14,57 +15,118 @@
         <Storyboard x:Key="SlideInServerPanel">
             <DoubleAnimation Storyboard.TargetName="ServerPanel" 
                              Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
-                             From="600" To="0" Duration="0:0:0.5" EasingFunction="{StaticResource EaseFunction}"/>
+                             From="600" To="0" Duration="0:0:0.3" EasingFunction="{StaticResource EaseFunction}"/>
+            <DoubleAnimation Storyboard.TargetName="ServerPanel" 
+                             Storyboard.TargetProperty="Opacity"
+                             From="0" To="1" Duration="0:0:0.3"/>
         </Storyboard>
         <!-- 滑出动画 -->
         <Storyboard x:Key="SlideOutServerPanel">
             <DoubleAnimation Storyboard.TargetName="ServerPanel" 
                              Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
-                             From="0" To="600" Duration="0:0:0.5" EasingFunction="{StaticResource EaseFunction}"/>
+                             From="0" To="600" Duration="0:0:0.3" EasingFunction="{StaticResource EaseFunction}"/>
+            <DoubleAnimation Storyboard.TargetName="ServerPanel" 
+                             Storyboard.TargetProperty="Opacity"
+                             From="1" To="0" Duration="0:0:0.3"/>
         </Storyboard>
+        <!-- 按钮样式 -->
+        <Style x:Key="ModernButton" TargetType="Button">
+            <Setter Property="Background" Value="#1ABC9C"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="Margin" Value="0,8"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="8"
+                                BorderThickness="0">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#16A085"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="RenderTransform">
+                                    <Setter.Value>
+                                        <ScaleTransform ScaleX="0.95" ScaleY="0.95"/>
+                                    </Setter.Value>
+                                </Setter>
+                                <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- 删除按钮样式 -->
+        <Style x:Key="DeleteButton" TargetType="Button" BasedOn="{StaticResource ModernButton}">
+            <Setter Property="Background" Value="#E74C3C"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#C0392B"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <!-- 次要按钮样式 -->
+        <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource ModernButton}">
+            <Setter Property="Background" Value="#7F8C8D"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#6C7A89"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
         <!-- 添加转换器 -->
         <local:EmptyTextToVisibilityConverter x:Key="EmptyTextToVisibilityConverter"/>
         <local:EmptyTextToHeightConverter x:Key="EmptyTextToHeightConverter"/>
     </Window.Resources>
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="250" />
-            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="250"/>
+            <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
         <!-- 主页面 -->
-        <Border x:Name="MainPanel" Grid.Column="0" Background="#34495E" Margin="10" BorderBrush="#2C3E50" BorderThickness="2">
-            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                <Image Source="pack://application:,,,/Resources/amongus_icon.png" Width="100" Height="100" Margin="0,0,0,20"/>
-                <Button Content="启动游戏" Click="LaunchGame_Click" Width="150" Height="40" Margin="0,0,0,10" Background="#E74C3C" Foreground="White" FontWeight="Bold"/>
-                <Button Content="服务器配置" Click="OpenServerEditor_Click" Width="150" Height="40" Background="#3498DB" Foreground="White" FontWeight="Bold"/>
-                <Button x:Name="InstallBepInExButton" Content="安装 BepInEx" Click="InstallBepInEx_Click" Width="150" Height="40" Margin="0,10,0,0" Background="#9B59B6" Foreground="White" FontWeight="Bold" Visibility="Collapsed"/>
-                <Button x:Name="HideBepInExPromptButton" Content="关闭 BepInEx 提示" Click="HideBepInExPromptButton_Click" Width="150" Height="30" Margin="0,5,0,0" Background="#7F8C8D" Foreground="White" FontWeight="Bold" Visibility="Collapsed"/>
-                <Button x:Name="UninstallBepInExButton" Content="卸载 BepInEx" Click="UninstallBepInEx_Click" Width="150" Height="40" Margin="0,5,0,0" Background="#E67E22" Foreground="White" FontWeight="Bold" Visibility="Collapsed"/>
-                <Button Content="模组管理" Click="OpenModManager_Click" Width="150" Height="40" Margin="0,10,0,0" Background="#8E44AD" Foreground="White" FontWeight="Bold"/>
-                <Button x:Name="ShowBepInExPromptButton" Content="开启 BepInEx 提示" Click="ShowBepInExPromptButton_Click" Width="150" Height="30" Margin="0,5,0,0" Background="#7F8C8D" Foreground="White" FontWeight="Bold" Visibility="Collapsed"/>
-                <TextBlock x:Name="BepInExInfoText" Text="BepInEx 是 Among Us 模组的模组加载器。安装后可将模组 DLL 放入 BepInEx\plugins 文件夹。" TextWrapping="Wrap" Width="230" Foreground="White" FontSize="12" Margin="0,5,0,0" Visibility="Collapsed"/>
+        <Border x:Name="MainPanel" Grid.Column="0" Background="#34495E" Margin="10" CornerRadius="10" BorderBrush="#2C3E50" BorderThickness="2">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="10">
+                <Image Source="pack://application:,,,/Resources/amongus_icon.png" Width="120" Height="120" Margin="0,0,0,20"/>
+                <Button Content="🚀 启动游戏" Click="LaunchGame_Click" Width="180" Height="45" Style="{StaticResource ModernButton}"/>
+                <Button Content="🖥️ 服务器配置" Click="OpenServerEditor_Click" Width="180" Height="45" Style="{StaticResource ModernButton}"/>
+                <Button x:Name="InstallBepInExButton" Content="🔧 安装 BepInEx" Click="InstallBepInEx_Click" Width="180" Height="45" Style="{StaticResource ModernButton}" Background="#9B59B6" Visibility="Collapsed"/>
+                <Button x:Name="HideBepInExPromptButton" Content="❌ 关闭提示" Click="HideBepInExPromptButton_Click" Width="180" Height="35" Style="{StaticResource SecondaryButton}" Visibility="Collapsed"/>
+                <Button x:Name="UninstallBepInExButton" Content="🗑️ 卸载 BepInEx" Click="UninstallBepInEx_Click" Width="180" Height="45" Style="{StaticResource DeleteButton}" Visibility="Collapsed"/>
+                <Button Content="🛠️ 模组管理" Click="OpenModManager_Click" Width="180" Height="45" Style="{StaticResource ModernButton}"/>
+                <Button x:Name="ShowBepInExPromptButton" Content="✅ 开启提示" Click="ShowBepInExPromptButton_Click" Width="180" Height="35" Style="{StaticResource SecondaryButton}" Visibility="Collapsed"/>
+                <TextBlock x:Name="BepInExInfoText" Text="BepInEx 是 Among Us 模组的模组加载器。安装后可将模组 DLL 放入 BepInEx\plugins 文件夹。" TextWrapping="Wrap" Width="220" Foreground="#ECF0F1" FontSize="12" Margin="0,10,0,0" Visibility="Collapsed"/>
             </StackPanel>
         </Border>
-        <Border Grid.Column="1" Background="#F5F5F5" Margin="0,10,10,10" BorderBrush="#2C3E50" BorderThickness="2" CornerRadius="10">
+        <Border Grid.Column="1" Background="#ECF0F1" Margin="0,10,10,10" CornerRadius="10" BorderBrush="#2C3E50" BorderThickness="2">
             <Grid>
-                <TextBlock Text="公告区域" HorizontalAlignment="Center" VerticalAlignment="Top" FontSize="16" Margin="0,30,0,0"/>
-                <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" TextWrapping="Wrap" Margin="20">
-                    欢迎使用 Among Us 启动器！<LineBreak/><LineBreak/>
-                    在这里您可以轻松管理您的自定义服务器。<LineBreak/><LineBreak/>
-                    功能特点：<LineBreak/>
-                    ✅ 添加、编辑和删除服务器<LineBreak/>
-                    ✅ 实时验证服务器信息<LineBreak/>
-                    ✅ 一键启动游戏<LineBreak/>
-                    ✅ 自动保存配置<LineBreak/><LineBreak/>
-                    使用说明：<LineBreak/>
-                    1. 点击"服务器配置"按钮管理服务器<LineBreak/>
-                    2. 点击"+"新建"添加新服务器<LineBreak/>
-                    3. 选择服务器进行详细配置<LineBreak/>
-                    4. 点击"启动游戏"开始游玩<LineBreak/><LineBreak/>
-                    注意：请确保您的服务器已正确配置并运行！
-                </TextBlock>
-                <Image Source="pack://application:,,,/Resources/logo.png" Opacity="0.1" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <TextBlock Text="📢 公告区域" HorizontalAlignment="Center" VerticalAlignment="Top" FontSize="18" FontWeight="Bold" Foreground="#2C3E50" Margin="0,20,0,0"/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="20,50,20,20">
+                    <TextBlock FontSize="14" TextWrapping="Wrap" Foreground="#34495E">
+                        <Bold>欢迎使用 Among Us 启动器！</Bold><LineBreak/><LineBreak/>
+                        在这里您可以轻松管理您的自定义服务器和模组！<LineBreak/><LineBreak/>
+                        <Bold>功能特点：</Bold><LineBreak/>
+                        ✅ 添加、编辑和删除服务器<LineBreak/>
+                        ✅ 实时验证服务器信息<LineBreak/>
+                        ✅ 一键启动游戏<LineBreak/>
+                        ✅ 模组管理和自动更新<LineBreak/><LineBreak/>
+                        <Bold>使用说明：</Bold><LineBreak/>
+                        1. 点击"服务器配置"管理服务器<LineBreak/>
+                        2. 点击"+ 新建"添加新服务器<LineBreak/>
+                        3. 选择服务器进行详细配置<LineBreak/>
+                        4. 点击"启动游戏"开始游玩<LineBreak/><LineBreak/>
+                        <Bold>注意：</Bold> 请确保服务器已正确配置并运行！首次启动模组可能需 2-3 分钟。
+                    </TextBlock>
+                </ScrollViewer>
+                <Image Source="pack://application:,,,/Resources/logo.png" Opacity="0.05" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Grid>
         </Border>
 
@@ -80,21 +142,15 @@
                 </Grid.ColumnDefinitions>
 
                 <!-- 左侧面板 -->
-                <Border Grid.Column="0" Background="#34495E" Margin="10" BorderBrush="#2C3E50" BorderThickness="2">
-                    <StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="10">
-                            <Button x:Name="BackButton" Content="← 返回" Width="80" Margin="5" Background="#95A5A6" Foreground="White" FontWeight="Bold" Click="BackButton_Click"/>
-                            <Button x:Name="NewServerButton" Content="+ 新建" Width="80" Margin="5" Background="#27AE60" Foreground="White" FontWeight="Bold" Click="NewServerButton_Click"/>
-                            <Button x:Name="DeleteButton" Content="- 删除" Width="80" Margin="5" Background="#E74C3C" Foreground="White" FontWeight="Bold" Visibility="Hidden" Click="DeleteButton_Click"/>
+                <Border Grid.Column="0" Background="#34495E" Margin="10" CornerRadius="10" BorderBrush="#2C3E50" BorderThickness="2">
+                    <StackPanel Margin="10">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Button x:Name="BackButton" Content="← 返回" Width="90" Style="{StaticResource SecondaryButton}" Click="BackButton_Click"/>
+                            <Button x:Name="NewServerButton" Content="+ 新建" Width="90" Style="{StaticResource ModernButton}" Click="NewServerButton_Click"/>
+                            <Button x:Name="DeleteButton" Content="- 删除" Width="90" Style="{StaticResource DeleteButton}" Visibility="Hidden" Click="DeleteButton_Click"/>
                         </StackPanel>
-                        <Grid Margin="10,5">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="服务器列表" Foreground="White" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
-                        </Grid>
-                        <ListBox x:Name="ServerListBox" Margin="10" Background="#ECF0F1" Foreground="#2C3E50" SelectionMode="Single" SelectionChanged="ServerListBox_SelectionChanged" Height="250"
+                        <TextBlock Text="📋 服务器列表" Foreground="#ECF0F1" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
+                        <ListBox x:Name="ServerListBox" Margin="0,0,0,10" Background="#ECF0F1" Foreground="#2C3E50" SelectionMode="Single" SelectionChanged="ServerListBox_SelectionChanged" Height="250"
                                  PreviewMouseLeftButtonDown="ServerListBox_PreviewMouseLeftButtonDown" MouseMove="ServerListBox_MouseMove"
                                  DragOver="ServerListBox_DragOver" Drop="ServerListBox_Drop" AllowDrop="True" VirtualizingStackPanel.IsVirtualizing="False" ScrollViewer.CanContentScroll="False" Loaded="ServerListBox_Loaded">
                             <ListBox.ItemTemplate>
@@ -104,35 +160,29 @@
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="Auto"/>
                                         </Grid.RowDefinitions>
-                                        <Rectangle x:Name="InsertLine" Grid.Row="0" Height="2" Fill="Black" Visibility="Collapsed" HorizontalAlignment="Stretch"/>
+                                        <Rectangle x:Name="InsertLine" Grid.Row="0" Height="2" Fill="#1ABC9C" Visibility="Collapsed" HorizontalAlignment="Stretch"/>
                                         <Grid Grid.Row="1" Height="{Binding DisplayText, Converter={StaticResource EmptyTextToHeightConverter}, FallbackValue=30}">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
                                             <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" Margin="5" VerticalAlignment="Center" Click="CheckBox_Click" Visibility="{Binding DisplayText, Converter={StaticResource EmptyTextToVisibilityConverter}}"/>
-                                            <TextBlock Grid.Column="1" Text="{Binding DisplayText}" VerticalAlignment="Center" Margin="5,0"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding DisplayText}" VerticalAlignment="Center" Margin="5,0" FontSize="14" Foreground="#2C3E50"/>
                                         </Grid>
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
-                        <StackPanel x:Name="ServerCountPanel" Margin="10,5">
-                            <TextBlock x:Name="ServerCountText" Foreground="#27AE60" FontSize="12"/>
+                        <StackPanel x:Name="ServerCountPanel" Margin="0,0,0,10">
+                            <TextBlock x:Name="ServerCountText" Foreground="#1ABC9C" FontSize="12"/>
                             <TextBlock x:Name="ServerWarningText" Text="14个以上的服务器可能无法正常显示" Foreground="#E67E22" FontSize="12" Visibility="Collapsed"/>
                         </StackPanel>
-                        <Grid Margin="10,5">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="国内主要私服：" Foreground="White" FontSize="14" FontWeight="Bold" VerticalAlignment="Center"/>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
-                                <CheckBox x:Name="SelectAllPresetCheckBox" Content="全选" Margin="5" VerticalAlignment="Center" Foreground="White" Click="SelectAllPresetCheckBox_Click"/>
-                                <Button x:Name="AddPresetButton" Content="↑ 添加" Width="80" Margin="5" Background="#27AE60" Foreground="White" FontWeight="Bold" Click="AddPresetButton_Click"/>
-                            </StackPanel>
-                        </Grid>
-                        <ListBox x:Name="PresetServerListBox" Margin="10" Background="#ECF0F1" Foreground="#2C3E50" Height="150" ItemsSource="{Binding}">
+                        <TextBlock Text="🌐 国内主要私服" Foreground="#ECF0F1" FontSize="16" FontWeight="Bold" Margin="0,0,0,10"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,10">
+                            <CheckBox x:Name="SelectAllPresetCheckBox" Content="全选" Margin="5" VerticalAlignment="Center" Foreground="#ECF0F1" Click="SelectAllPresetCheckBox_Click"/>
+                            <Button x:Name="AddPresetButton" Content="↑ 添加" Width="90" Style="{StaticResource ModernButton}" Click="AddPresetButton_Click"/>
+                        </StackPanel>
+                        <ListBox x:Name="PresetServerListBox" Background="#ECF0F1" Foreground="#2C3E50" Height="150" ItemsSource="{Binding}">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <Grid>
@@ -141,7 +191,7 @@
                                             <ColumnDefinition Width="*"/>
                                         </Grid.ColumnDefinitions>
                                         <CheckBox Grid.Column="0" IsChecked="{Binding IsSelected}" Margin="5" VerticalAlignment="Center" Click="PresetCheckBox_Click"/>
-                                        <TextBlock Grid.Column="1" Text="{Binding DisplayText}" VerticalAlignment="Center" Margin="5,0"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding DisplayText}" VerticalAlignment="Center" Margin="5,0" FontSize="14" Foreground="#2C3E50"/>
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
@@ -150,9 +200,9 @@
                 </Border>
 
                 <!-- 右侧面板 -->
-                <Border Grid.Column="1" Background="#ECF0F1" Margin="0,10,10,10" BorderBrush="#2C3E50" BorderThickness="2" CornerRadius="10">
+                <Border Grid.Column="1" Background="#ECF0F1" Margin="0,10,10,10" CornerRadius="10" BorderBrush="#2C3E50" BorderThickness="2">
                     <StackPanel x:Name="DetailPanel" Margin="20">
-                        <TextBlock Text="请从左侧列表中选择一个服务器进行配置" Foreground="#7F8C8D" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <TextBlock Text="请选择一个服务器进行配置" Foreground="#7F8C8D" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Border>
             </Grid>
