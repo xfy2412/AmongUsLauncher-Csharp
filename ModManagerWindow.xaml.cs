@@ -26,7 +26,8 @@ namespace AULGK
         // 字段：模组管理器核心配置
         private readonly string? _gamePath; // 游戏安装目录，如 c:\program files (x86)\steam\steamapps\common\Among Us
         private readonly HttpClient _httpClient; // 用于下载模组列表和文件
-        private readonly string _modsUrl = "https://mxzc.cloud:35249/mod_list.json"; // 模组列表 JSON 地址
+        private readonly string _modsUrl = "https://mxzc.cloud/mod_list.json"; // 模组列表 JSON 地址
+        private readonly DownLoadAPI _downloadApi = new();
         private readonly string _modDir; // 本地模组根目录：mod/
         private readonly string _infoDir; // 模组信息目录：mod/info/
         private readonly string _filesDir; // 模组文件目录：mod/files/
@@ -109,22 +110,76 @@ namespace AULGK
         // 加载模组列表：从远程 URL 获取模组并更新 UI
         private async Task LoadModsAsync()
         {
-            if (_isLoadingMods) return; // 防止重复加载
+            if (_isLoadingMods) return;
             _isLoadingMods = true;
 
             try
             {
-                // 清空现有模组列表
                 await Dispatcher.InvokeAsync(() =>
                 {
                     _mods.Clear();
                     Log($"清空 _mods 集合，当前模组数：{_mods.Count}");
                 });
 
-                // 获取远程模组列表
                 var json = await _httpClient.GetStringAsync(_modsUrl);
                 Log($"从 {_modsUrl} 获取 mod_list.json：{json}");
-                var list = JsonSerializer.Deserialize<List<ModInfo>>(json) ?? new();
+
+                // 使用新结构反序列化
+                var response = JsonSerializer.Deserialize<ModListResponse>(json);
+                var list = new List<ModInfo>();
+
+                if (response?.Mods != null)
+                {
+                    foreach (var modEntry in response.Mods)
+                    {
+                        string modName = modEntry.Key;
+                        string? description = modEntry.Value.Description;
+
+                        if (modEntry.Value.Versions != null && modEntry.Value.Versions.Any())
+                        {
+                            // 获取最新版本（按版本号排序）
+                            var latestVersion = modEntry.Value.Versions
+                                .OrderByDescending(v =>
+                                {
+                                    string versionStr = v.Key;
+                                    if (Version.TryParse(versionStr, out Version? version))
+                                        return version;
+
+                                    // 尝试处理带前缀的版本号（如 "v1.2.3"）
+                                    if (versionStr.StartsWith("v", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        versionStr = versionStr.Substring(1);
+                                        if (Version.TryParse(versionStr, out version))
+                                            return version;
+                                    }
+
+                                    return new Version(0, 0);
+                                })
+                                .FirstOrDefault();
+
+                            if (!latestVersion.Equals(default(KeyValuePair<string, ModVersionInfo>)))
+                            {
+                                list.Add(new ModInfo
+                                {
+                                    Name = modName,
+                                    Description = description ?? "暂无描述",
+                                    Version = latestVersion.Key,
+                                    GameVersion = latestVersion.Value.GameVersion,
+                                    BepInExVersion = latestVersion.Value.BepInExVersion
+                                });
+                            }
+                        }
+                        else
+                        {
+                            Log($"模组 '{modName}' 没有可用版本");
+                        }
+                    }
+                }
+                else
+                {
+                    Log("未找到有效的模组数据");
+                }
+
                 Log($"解析到 {list.Count} 个模组：{string.Join(", ", list.Select(m => m.Name))}");
 
                 // 去重模组（按 Name）
@@ -148,12 +203,15 @@ namespace AULGK
                         };
                         SaveStatusFile();
                     }
-                    else if (_modStatuses[modInfo.Name].Downloaded == 0 && _modStatuses[modInfo.Name].Version != modInfo.Version)
+                    else if (_modStatuses[modInfo.Name].Downloaded == 0 &&
+                             _modStatuses[modInfo.Name].Version != modInfo.Version)
                     {
                         _modStatuses[modInfo.Name].Version = modInfo.Version;
                         SaveStatusFile();
                     }
+
                     UpdateModStatus(modInfo);
+
                     await Dispatcher.InvokeAsync(() =>
                     {
                         if (!_mods.Any(m => m.Name == modInfo.Name))
@@ -255,11 +313,6 @@ namespace AULGK
         private async void Install_Click(object sender, RoutedEventArgs e)
         {
             if (DetailPanel.DataContext is not ModInfo selectedMod) return;
-            if (string.IsNullOrEmpty(selectedMod.DownloadUrl))
-            {
-                MessageBox.Show("未找到可下载的版本文件。", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
-            }
 
             if (_modStatuses.TryGetValue(selectedMod.Name, out var status) && status.Downloaded == 1 && status.Version != selectedMod.Version)
             {
@@ -425,7 +478,9 @@ namespace AULGK
                 StatusText.Text = $"下载 {selectedMod.Name}...";
                 Log($"开始下载 {selectedMod.Name}");
 
-                string downloadUrl = selectedMod.DownloadUrl;
+                string downloadUrl = await _downloadApi.GetDownloadUrl("mod", selectedMod.Name, selectedMod.Version);
+                selectedMod.GeneratedUrl = downloadUrl;
+                Log($"解析到的下载链接：{downloadUrl}");
                 string fileName = IOPath.GetFileName(new Uri(downloadUrl).LocalPath);
                 string tmp = IOPath.Combine(IOPath.GetTempPath(), fileName);
 
@@ -626,7 +681,9 @@ namespace AULGK
                     Log($"删除 JSON 文件：{jsonPath}");
                 }
 
-                string downloadUrl = selectedMod.DownloadUrl;
+                string downloadUrl = await _downloadApi.GetDownloadUrl("mod", selectedMod.Name, selectedMod.Version);
+                selectedMod.GeneratedUrl = downloadUrl;
+                Log($"解析到的下载链接：" + downloadUrl);
                 string fileName = IOPath.GetFileName(new Uri(downloadUrl).LocalPath);
                 string tmp = IOPath.Combine(IOPath.GetTempPath(), fileName);
 
@@ -893,7 +950,9 @@ namespace AULGK
             [JsonPropertyName("name")] public string Name { get => _name; set { _name = value; OnPropertyChanged(); } }
             [JsonPropertyName("version")] public string Version { get => _version; set { _version = value; OnPropertyChanged(); } }
             [JsonPropertyName("description")] public string Description { get => _description; set { _description = value; OnPropertyChanged(); } }
-            [JsonPropertyName("path")] public string DownloadUrl { get => _downloadUrl; set { _downloadUrl = value; OnPropertyChanged(); } }
+            [JsonIgnore] public string? GameVersion { get; set; }
+            [JsonIgnore] public string? BepInExVersion { get; set; }
+            [JsonIgnore] public string GeneratedUrl { get; set; } = "";
             [JsonIgnore] public bool IsDownloaded { get => _isDownloaded; set { _isDownloaded = value; OnPropertyChanged(); } }
             [JsonIgnore] public bool IsInstalled { get => _isInstalled; set { _isInstalled = value; OnPropertyChanged(); } }
             [JsonIgnore] public string InstallState { get => _installState; set { _installState = value; OnPropertyChanged(); } }
@@ -902,6 +961,37 @@ namespace AULGK
 
             public event PropertyChangedEventHandler? PropertyChanged;
             public void OnPropertyChanged([CallerMemberName] string? prop = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(prop));
+        }
+
+        // 新的 DTO 类用于解析 JSON
+        private class ModListResponse
+        {
+            [JsonPropertyName("game")]
+            public List<string>? GameVersions { get; set; }
+
+            [JsonPropertyName("bepinex")]
+            public List<string>? BepInExVersions { get; set; }
+
+            [JsonPropertyName("mod")]
+            public Dictionary<string, ModEntry>? Mods { get; set; }
+        }
+
+        private class ModEntry
+        {
+            [JsonPropertyName("description")]
+            public string? Description { get; set; }
+
+            [JsonPropertyName("versions")]
+            public Dictionary<string, ModVersionInfo>? Versions { get; set; }
+        }
+
+        private class ModVersionInfo
+        {
+            [JsonPropertyName("game")]
+            public string? GameVersion { get; set; }
+
+            [JsonPropertyName("bepinex")]
+            public string? BepInExVersion { get; set; }
         }
 
         // 辅助类：模组状态

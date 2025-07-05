@@ -4,19 +4,43 @@
         Title="模组管理" Height="500" Width="750" WindowStartupLocation="CenterOwner"
         Background="#2C3E50" Focusable="True">
     <Window.Resources>
-        <Style TargetType="Button">
-            <Setter Property="Background" Value="#3498DB"/>
+        <!-- 按钮样式 -->
+        <Style x:Key="ModernButton" TargetType="Button">
+            <Setter Property="Background" Value="#1ABC9C"/>
             <Setter Property="Foreground" Value="White"/>
-            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="Margin" Value="5,0"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#2980B9"/>
-                </Trigger>
-            </Style.Triggers>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="8"
+                                BorderThickness="0">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#16A085"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="RenderTransform">
+                                    <Setter.Value>
+                                        <ScaleTransform ScaleX="0.95" ScaleY="0.95"/>
+                                    </Setter.Value>
+                                </Setter>
+                                <Setter Property="RenderTransformOrigin" Value="0.5,0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
-        <Style x:Key="UninstallButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <!-- 卸载按钮样式 -->
+        <Style x:Key="UninstallButton" TargetType="Button" BasedOn="{StaticResource ModernButton}">
             <Setter Property="Background" Value="#E74C3C"/>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
@@ -24,6 +48,7 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+        <!-- 状态文本样式 -->
         <Style x:Key="StatusTextStyle" TargetType="TextBlock">
             <Style.Triggers>
                 <DataTrigger Binding="{Binding InstallState}" Value="模组未下载">
@@ -37,6 +62,28 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
+        <!-- 列表项样式 -->
+        <Style x:Key="ModListItemStyle" TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="5"/>
+            <Setter Property="Margin" Value="0,2"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="ItemBorder" Background="Transparent" CornerRadius="5" Padding="5">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#3498DB"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ItemBorder" Property="Background" Value="#3E5F8A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
     <Grid Margin="15">
         <Grid.ColumnDefinitions>
@@ -45,42 +92,30 @@
         </Grid.ColumnDefinitions>
 
         <!-- 左侧模组列表 -->
-        <Border Grid.Column="0" Background="#34495E" CornerRadius="5" Padding="10">
+        <Border Grid.Column="0" Background="#34495E" CornerRadius="10" Padding="10">
             <StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                    <Button Content="🔄 刷新" Width="80" Click="Refresh_Click"/>
+                    <Button Content="🔄 刷新列表" Width="100" Style="{StaticResource ModernButton}" Click="Refresh_Click"/>
                 </StackPanel>
-                <ListBox x:Name="ModListBox" Background="Transparent" BorderThickness="0" Foreground="White" Height="380" SelectionChanged="ModListBox_SelectionChanged">
+                <ListBox x:Name="ModListBox" Background="Transparent" BorderThickness="0" Foreground="#ECF0F1" Height="380" SelectionChanged="ModListBox_SelectionChanged" ItemContainerStyle="{StaticResource ModListItemStyle}">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <Border Padding="8" Margin="0,2" CornerRadius="3">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="14" VerticalAlignment="Center"/>
-                                    <TextBlock Text=" (有更新)" FontSize="11" Foreground="#E74C3C" FontWeight="Bold" VerticalAlignment="Center">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Visibility" Value="Collapsed"/>
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding HasUpdate}" Value="True">
-                                                        <Setter Property="Visibility" Value="Visible"/>
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                    <TextBlock Text="{Binding InstallState}" FontSize="11" Style="{StaticResource StatusTextStyle}" Margin="5,0,0,0"/>
-                                </StackPanel>
-                                <Border.Style>
-                                    <Style TargetType="Border">
-                                        <Setter Property="Background" Value="Transparent"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
-                                                <Setter Property="Background" Value="#3498DB"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Border.Style>
-                            </Border>
+                            <StackPanel Orientation="Horizontal" Margin="5">
+                                <TextBlock Text="{Binding Name}" FontWeight="Bold" FontSize="14" VerticalAlignment="Center"/>
+                                <TextBlock Text=" (有更新)" FontSize="12" Foreground="#E74C3C" FontWeight="Bold" VerticalAlignment="Center" Margin="5,0,0,0">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding HasUpdate}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="{Binding InstallState}" FontSize="12" Style="{StaticResource StatusTextStyle}" Margin="5,0,0,0"/>
+                            </StackPanel>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
@@ -88,21 +123,21 @@
         </Border>
 
         <!-- 右侧详情面板 -->
-        <Border Grid.Column="1" Margin="15,0,0,0" Background="#ECF0F1" CornerRadius="5" Padding="20">
+        <Border Grid.Column="1" Margin="15,0,0,0" Background="#ECF0F1" CornerRadius="10" Padding="20">
             <StackPanel x:Name="DetailPanel" DataContext="{Binding SelectedItem, ElementName=ModListBox}">
-                <TextBlock Text="请从左侧选择一个模组" x:Name="DetailHint" FontSize="18" Foreground="#7F8C8D" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                <TextBlock Text="请选择一个模组" x:Name="DetailHint" FontSize="18" FontWeight="Bold" Foreground="#7F8C8D" VerticalAlignment="Center" HorizontalAlignment="Center"/>
                 <StackPanel x:Name="DetailContent" Visibility="Collapsed">
-                    <TextBlock Text="{Binding Name}" FontSize="22" FontWeight="Bold" Foreground="#2C3E50"/>
-                    <TextBlock Text="{Binding Version, StringFormat='版本: {0}'}" FontSize="14" Foreground="#7F8C8D" Margin="0,2,0,15"/>
-                    <TextBlock Text="{Binding Description}" TextWrapping="Wrap" Margin="0,0,0,20"/>
+                    <TextBlock Text="{Binding Name}" FontSize="24" FontWeight="Bold" Foreground="#2C3E50"/>
+                    <TextBlock Text="{Binding Version, StringFormat='版本: {0}'}" FontSize="14" Foreground="#7F8C8D" Margin="0,5,0,10"/>
+                    <TextBlock Text="{Binding Description}" TextWrapping="Wrap" FontSize="14" Foreground="#34495E" Margin="0,0,0,20"/>
                     <TextBlock Text="{Binding InstallState}" FontSize="14" Style="{StaticResource StatusTextStyle}" Margin="0,0,0,15"/>
                     <StackPanel Orientation="Horizontal">
-                        <Button x:Name="InstallButton" Content="⬇️ 安装/更新" Click="Install_Click"/>
-                        <Button x:Name="ToggleButton" Margin="10,0,0,0" Content="🔌 启用/禁用" Click="Toggle_Click"/>
-                        <Button x:Name="UninstallButton" Margin="10,0,0,0" Style="{StaticResource UninstallButton}" Content="🗑️ 卸载" Click="Uninstall_Click"/>
-                        <Button x:Name="OpenFolderButton" Margin="10,0,0,0" Content="📂 打开目录" Click="OpenFolder_Click"/>
+                        <Button x:Name="InstallButton" Content="⬇️ 安装/更新" Style="{StaticResource ModernButton}" Click="Install_Click"/>
+                        <Button x:Name="ToggleButton" Content="🔌 启用/禁用" Style="{StaticResource ModernButton}" Click="Toggle_Click"/>
+                        <Button x:Name="UninstallButton" Content="🗑️ 卸载" Style="{StaticResource UninstallButton}" Click="Uninstall_Click"/>
+                        <Button x:Name="OpenFolderButton" Content="📂 打开目录" Style="{StaticResource ModernButton}" Click="OpenFolder_Click"/>
                     </StackPanel>
-                    <TextBlock x:Name="StatusText" Text="" Margin="0,15,0,0" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="StatusText" Text="" Margin="0,15,0,0" FontWeight="SemiBold" Foreground="#2C3E50"/>
                 </StackPanel>
             </StackPanel>
         </Border>

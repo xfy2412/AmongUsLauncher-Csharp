@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>人机验证</title>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <style>
+    body {
+      background-image: url('/background.jpg'); /* 替换为你的背景图片 */
+      background-size: cover;
+      background-position: center;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      font-family: Arial, sans-serif;
+    }
+    .container {
+      background-color: rgba(0, 0, 0, 0.9);
+      border-radius: 10px;
+      padding: 20px;
+      text-align: center;
+      max-width: 400px;
+      width: 90%;
+    }
+    .button {
+      background-color: #007bff;
+      color: white;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      margin-top: 10px;
+      opacity: 0.5;
+      pointer-events: none;
+    }
+    .button.enabled {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    #remaining-time {
+      margin-top: 10px;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 style="color: white;">完成验证以申请访问权限</h1>
+    <div class="cf-turnstile" data-sitekey="0x4AAAAAABi887x7cL5-rjSD" data-size="compact"></div>
+    <button id="submit-button" class="button" disabled>申请访问权限</button>
+    <div id="remaining-time"></div>
+  </div>
+
+  <script>
+    const submitButton = document.getElementById('submit-button');
+    let downloadAccess = false;
+
+    window.turnstileCallback = function(token) {
+      if (token) {
+        submitButton.classList.add('enabled');
+        submitButton.disabled = false;
+      }
+    };
+
+    submitButton.addEventListener('click', async () => {
+      const token = document.querySelector('input[name="cf-turnstile-response"]').value;
+      const response = await fetch('/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `cf-turnstile-response=${encodeURIComponent(token)}`
+      });
+      const result = await response.json();
+      if (result.downloadAccess) {
+        downloadAccess = true;
+        updateRemainingTime();
+        window.location.reload();
+      } else {
+        alert(result.message);
+      }
+    });
+
+    async function updateRemainingTime() {
+      const response = await fetch('/remaining-time');
+      const data = await response.json();
+      const timeDisplay = document.getElementById('remaining-time');
+      if (data.remaining > 0) {
+        timeDisplay.textContent = `下载权限剩余时间：${Math.floor(data.remaining / 60)}分${data.remaining % 60}秒`;
+        setTimeout(updateRemainingTime, 1000);
+      } else if (downloadAccess) {
+        timeDisplay.textContent = '下载权限已过期，请重新验证';
+      }
+    }
+
+    window.onload = updateRemainingTime;
+  </script>
+</body>
+</html>
