@@ -8,7 +8,7 @@ namespace AULGK
     internal class DownLoadAPI
     {
         private readonly HttpClient _httpClient = new();
-        private readonly string _apipath = "https://mxzc.cloud/api/download?";
+        private readonly string _apipath = "https://aul.xfyweb.cn/api/download?";
 
         // 方法名建议遵循 PascalCase 规范
         public async Task<string> GetDownloadUrl(string type, string name, string version)

@@ -406,13 +406,21 @@ namespace AULGK
 
                             // 收集父目录
                             string? parentDir = IOPath.GetDirectoryName(file);
-                            while (!string.IsNullOrEmpty(parentDir) && !parentDir.Equals(_gamePath, StringComparison.OrdinalIgnoreCase))
+                            while (!string.IsNullOrEmpty(parentDir))
                             {
+                                // 不要将顶层 BepInEx 目录或 BepInEx/plugins 及其子目录加入删除列表，避免误删整个 BepInEx 文件夹
                                 string fullParentDir = IOPath.Combine(_gamePath!, parentDir);
-                                if (!fullParentDir.StartsWith(IOPath.Combine(_gamePath!, "BepInEx/plugins"), StringComparison.OrdinalIgnoreCase))
+                                string bepinexRoot = IOPath.Combine(_gamePath!, "BepInEx");
+                                string bepinexPlugins = IOPath.Combine(bepinexRoot, "plugins");
+
+                                // 如果已到达 BepInEx 根或在 BepInEx/plugins 目录下，则停止收集
+                                if (fullParentDir.Equals(bepinexRoot, StringComparison.OrdinalIgnoreCase) ||
+                                    fullParentDir.StartsWith(bepinexPlugins, StringComparison.OrdinalIgnoreCase))
                                 {
-                                    directoriesToDelete.Add(fullParentDir);
+                                    break;
                                 }
+
+                                directoriesToDelete.Add(fullParentDir);
                                 parentDir = IOPath.GetDirectoryName(parentDir);
                             }
                         }
