@@ -26,7 +26,7 @@ namespace AULGK
         // 字段：模组管理器核心配置
         private readonly string? _gamePath; // 游戏安装目录，如 c:\program files (x86)\steam\steamapps\common\Among Us
         private readonly HttpClient _httpClient; // 用于下载模组列表和文件
-        private readonly string _modsUrl = "https://mxzc.cloud/mod_list.json"; // 模组列表 JSON 地址
+        private readonly string _modsUrl = "https://aul.xfyweb.cn/mod_list.json"; // 模组列表 JSON 地址
         private readonly DownLoadAPI _downloadApi = new();
         private readonly string _modDir; // 本地模组根目录：mod/
         private readonly string _infoDir; // 模组信息目录：mod/info/

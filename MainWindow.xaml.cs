@@ -56,7 +56,7 @@ namespace AULGK
     {
         // 私有字段
         private readonly HttpClient _httpClient = new();
-        private readonly string _presetServersUrl = "https://mxzc.cloud/preset_servers.json";
+        private readonly string _presetServersUrl = "https://aul.xfyweb.cn/preset_servers.json";
         private readonly DownLoadAPI _downloadApi = new();
         private readonly string _appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         private readonly string _filePath;
